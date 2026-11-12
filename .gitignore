@@ -1,0 +1,11 @@
+# Anchored so cmd/lossledger/ and internal/report/ are never caught by these.
+/lossledger
+/report/
+/dist/
+/testbed/data/
+
+*.test
+*.out
+coverage.*
+
+.DS_Store
