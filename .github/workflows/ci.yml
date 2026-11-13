@@ -1,0 +1,69 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          check-latest: true
+
+      - name: formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "these files are not gofmt clean:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: vet
+        run: go vet ./...
+
+      - name: build
+        run: go build ./...
+
+      - name: unit tests
+        run: go test -race -count=1 ./...
+
+      - name: no em-dashes in source or docs
+        run: |
+          if grep -rInP '\x{2014}| - ' --include='*.go' --include='*.md' --include='*.yaml' --include='*.yml' .; then
+            echo "em-dashes found; use a comma, a colon, a full stop or parentheses"
+            exit 1
+          fi
+
+  selfcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          check-latest: true
+
+      # The self-validation gate is the one job that must never be skipped.
+      # It runs the reference pipelines and checks that the faithful one comes
+      # back clean and the sabotaged one is caught with exactly the injected
+      # ranges. A harness that fails this cannot be trusted to judge anything.
+      - name: self-validation gate
+        env:
+          LOSSLEDGER_HMAC_KEY: ci-selfcheck-key
+        run: |
+          go build -o lossledger ./cmd/lossledger
+          ./lossledger selfcheck -seqs 20000
+
+      - name: gate across several seeds
+        run: go test -count=1 -run TestSelfCheckAcrossSeeds ./internal/refpipe/
