@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Disclosure policy | LossLedger</title>
+<meta name="description" content="How LossLedger handles findings about other people's collectors and stores. Maintainers first, privately, with a reproduction.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%23F0F3EE'/><line x1='50' y1='14' x2='50' y2='86' stroke='%2312171A' stroke-width='7'/><line x1='14' y1='34' x2='86' y2='34' stroke='%2312171A' stroke-width='5'/><line x1='14' y1='62' x2='40' y2='62' stroke='%23B5362C' stroke-width='7'/></svg>">
+<style>
+:root{
+  /* Pale columnar accounting pad. The paper is the first thing that says
+     "ledger" before a single word is read. */
+  --paper:#F0F3EE; --paper-2:#F7F9F5; --panel:#FCFDFA;
+  --ink:#12171A; --ink-2:#333C37; --muted:#5A635C;
+  --rule:#D5DFD3; --rule-2:#BDC9BA;
+  /* Red ink is the only accent, used the way an accountant uses it: to mark a
+     discrepancy. A balanced book gets no colour at all. */
+  --red:#B5362C; --red-ink:#8F2A22; --red-soft:#F7E9E7;
+  --green:#2F5D45;
+
+  --serif:'IBM Plex Serif',Georgia,serif;
+  --sans:'IBM Plex Sans',system-ui,-apple-system,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;
+
+  --gutter:clamp(20px,5vw,72px);
+  --maxw:1180px;
+}
+*,*::before,*::after{box-sizing:border-box}
+html,body{overflow-x:clip}
+html{scroll-behavior:smooth;scroll-padding-top:84px;-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--paper);color:var(--ink);
+  font-family:var(--sans);font-size:17px;line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+  /* The faint horizontal ruling of ledger paper, under everything. */
+  background-image:repeating-linear-gradient(to bottom,transparent 0,transparent 35px,rgba(18,23,26,.035) 35px,rgba(18,23,26,.035) 36px);
+}
+h1,h2,h3{margin:0;font-family:var(--serif);font-weight:600;letter-spacing:-.018em;line-height:1.1;text-wrap:balance}
+h1{font-size:clamp(2.6rem,6.2vw,4.6rem);line-height:1.02;letter-spacing:-.03em}
+h2{font-size:clamp(1.85rem,3.4vw,2.8rem)}
+h3{font-size:1.1rem;font-family:var(--sans);font-weight:600;letter-spacing:-.005em}
+p{margin:0;text-wrap:pretty}
+a{color:inherit;text-decoration-thickness:1px;text-underline-offset:3px;text-decoration-color:var(--rule-2)}
+a:hover{text-decoration-color:var(--red)}
+:focus-visible{outline:2px solid var(--red);outline-offset:3px;border-radius:2px}
+.wrap{max-width:var(--maxw);margin-inline:auto;padding-inline:var(--gutter)}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums slashed-zero}
+.mut{color:var(--muted)}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+
+/* ---------- nav ---------- */
+.nav{position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--paper) 90%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--rule)}
+.nav .wrap{display:flex;align-items:center;gap:18px;height:64px}
+.mark{display:flex;align-items:center;gap:10px;font-family:var(--serif);font-weight:600;font-size:1.06rem;letter-spacing:-.02em;text-decoration:none;white-space:nowrap}
+.mark svg{flex:0 0 auto}
+.nav nav{margin-left:auto;display:flex;gap:4px}
+.nav nav a{font-size:.9rem;color:var(--muted);text-decoration:none;padding:7px 11px;border-radius:5px}
+.nav nav a:hover{color:var(--ink);background:var(--paper-2)}
+@media(max-width:820px){.nav nav{display:none}}
+.gh{display:inline-flex;align-items:center;gap:7px;font-size:.88rem;padding:8px 14px;border:1px solid var(--rule-2);border-radius:6px;text-decoration:none;background:var(--panel);white-space:nowrap}
+.gh:hover{border-color:var(--ink);background:var(--paper-2)}
+@media(max-width:820px){.nav nav{display:none}.gh{margin-left:auto}}
+
+/* ---------- hero ---------- */
+.hero{padding:clamp(48px,7vw,92px) 0 clamp(40px,6vw,72px)}
+.hero-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.02fr);gap:clamp(32px,5vw,64px);align-items:center}
+@media(max-width:980px){.hero-grid{grid-template-columns:minmax(0,1fr)}}
+.tag{display:inline-flex;align-items:center;gap:9px;font-family:var(--mono);font-size:.76rem;color:var(--muted);border:1px solid var(--rule-2);border-radius:999px;padding:4px 12px;margin-bottom:22px}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--green);flex:0 0 auto}
+.lede{font-size:clamp(1.07rem,1.6vw,1.24rem);color:var(--ink-2);margin-top:22px;max-width:50ch;line-height:1.55}
+.lede b{font-weight:600;color:var(--ink)}
+.cta{display:flex;flex-wrap:wrap;gap:12px;margin-top:30px}
+.btn{display:inline-flex;align-items:center;gap:9px;font-size:.95rem;font-weight:500;padding:12px 20px;border-radius:7px;text-decoration:none;border:1px solid var(--ink);background:var(--ink);color:var(--paper);transition:background .16s,border-color .16s}
+.btn:hover{background:#000;border-color:#000}
+.btn-2{background:transparent;color:var(--ink);border-color:var(--rule-2)}
+.btn-2:hover{background:var(--panel);border-color:var(--ink)}
+
+/* ---------- the live ledger ---------- */
+.ledger{background:var(--panel);border:1px solid var(--rule-2);border-radius:10px;overflow:hidden;box-shadow:0 1px 2px rgba(18,23,26,.05)}
+.ledger-head{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:11px 16px;border-bottom:1px solid var(--rule);background:var(--paper-2)}
+.ledger-title{font-family:var(--mono);font-size:.78rem;color:var(--muted)}
+.ledger-live{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:.72rem;color:var(--muted)}
+.pulse{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+.cols{display:grid;grid-template-columns:1fr 1px 1fr;font-family:var(--mono);font-size:.82rem}
+.spine{background:var(--rule-2)}
+.col-head{padding:9px 16px;font-size:.72rem;color:var(--muted);border-bottom:1px solid var(--rule);letter-spacing:.02em}
+.col-head.r{text-align:right}
+.rows{height:272px;overflow:hidden;position:relative}
+.row{display:flex;align-items:baseline;gap:10px;padding:5px 16px;height:28px;white-space:nowrap}
+.row.r{justify-content:flex-end}
+.seq{color:var(--ink)}
+.meta{font-size:.72rem;color:var(--muted)}
+.row.gap{color:var(--red);background:var(--red-soft)}
+.row.gap .seq{color:var(--red-ink);font-weight:500}
+.row.gap .meta{color:var(--red)}
+.row.wait .meta{color:var(--muted)}
+.row.enter{animation:slide .36s cubic-bezier(.16,1,.3,1) both}
+@keyframes slide{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.balance{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--rule);background:var(--paper-2)}
+.bal{padding:12px 16px;border-right:1px solid var(--rule)}
+.bal:last-child{border-right:0}
+.bal dt{font-size:.68rem;color:var(--muted);margin-bottom:3px;font-family:var(--sans)}
+.bal dd{margin:0;font-family:var(--mono);font-size:1.12rem;font-variant-numeric:tabular-nums slashed-zero}
+.bal.is-bad dd{color:var(--red)}
+@media(max-width:520px){.balance{grid-template-columns:repeat(2,1fr)}.bal:nth-child(2){border-right:0}.bal:nth-child(1),.bal:nth-child(2){border-bottom:1px solid var(--rule)}.rows{height:224px}}
+.cap{font-family:var(--mono);font-size:.73rem;color:var(--muted);margin-top:11px;text-align:center}
+
+/* ---------- sections ---------- */
+section{padding:clamp(56px,8vw,104px) 0;border-top:1px solid var(--rule)}
+.shead{max-width:60ch;margin-bottom:clamp(30px,4vw,48px)}
+.shead p{margin-top:14px;color:var(--muted);font-size:1.03rem}
+.kicker{font-family:var(--mono);font-size:.74rem;color:var(--red);margin-bottom:12px}
+
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:9px;overflow:hidden}
+@media(max-width:760px){.grid2{grid-template-columns:minmax(0,1fr)}}
+.cell{background:var(--panel);padding:clamp(20px,2.6vw,30px)}
+.cell .n{font-family:var(--mono);font-size:.74rem;color:var(--muted);margin-bottom:10px}
+.cell p{margin-top:9px;color:var(--muted);font-size:.95rem}
+
+/* ---------- diagrams ---------- */
+.fig{background:var(--panel);border:1px solid var(--rule-2);border-radius:10px;padding:clamp(18px,2.6vw,30px);overflow:hidden}
+.fig svg{width:100%;height:auto;display:block}
+.fig figcaption{font-family:var(--mono);font-size:.74rem;color:var(--muted);margin-top:16px;padding-top:14px;border-top:1px solid var(--rule);line-height:1.6}
+.d-lab{font-family:'IBM Plex Mono',monospace;font-size:12px;fill:var(--muted)}
+.d-ttl{font-family:'IBM Plex Mono',monospace;font-size:13px;fill:var(--ink)}
+.d-sm{font-family:'IBM Plex Mono',monospace;font-size:10.5px;fill:var(--muted)}
+.d-red{fill:var(--red)}
+.d-box{fill:var(--paper-2);stroke:var(--rule-2);stroke-width:1}
+.d-box-ink{fill:var(--ink);stroke:none}
+.d-box-red{fill:var(--red-soft);stroke:var(--red);stroke-width:1}
+.d-line{stroke:var(--rule-2);stroke-width:1.5;fill:none}
+.d-flow{stroke:var(--ink);stroke-width:1.5;fill:none}
+.d-flow-red{stroke:var(--red);stroke-width:1.5;fill:none}
+.d-dash{stroke:var(--muted);stroke-width:1.25;fill:none;stroke-dasharray:4 4}
+.d-zone{fill:none;stroke:var(--rule-2);stroke-width:1.25;stroke-dasharray:6 5}
+.d-arc{fill:none;stroke:var(--red);stroke-width:1.5}
+@media(max-width:620px){.d-lab{font-size:15px}.d-ttl{font-size:16px}.d-sm{font-size:13px}}
+
+/* evidence */
+.ev{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:9px;overflow:hidden}
+.ev-row{background:var(--panel);display:grid;grid-template-columns:168px minmax(0,1fr) auto;gap:22px;padding:19px clamp(18px,2.4vw,26px);align-items:baseline}
+@media(max-width:820px){.ev-row{grid-template-columns:minmax(0,1fr);gap:7px}}
+.ev-src{font-family:var(--mono);font-size:.8rem;color:var(--ink)}
+.ev-txt{color:var(--ink-2);font-size:.95rem}
+.ev-fig{font-family:var(--mono);font-size:.82rem;color:var(--red);white-space:nowrap}
+
+/* taxonomy table */
+.tbl-wrap{overflow-x:auto;border:1px solid var(--rule);border-radius:9px;background:var(--panel)}
+table{width:100%;border-collapse:collapse;font-size:.93rem;min-width:620px}
+th,td{text-align:left;padding:13px 18px;border-bottom:1px solid var(--rule)}
+tbody tr:last-child td{border-bottom:0}
+th{font-size:.74rem;color:var(--muted);font-weight:500;background:var(--paper-2)}
+td.sev,th.sev{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.an{font-family:var(--mono);font-size:.86rem}
+.an.bad{color:var(--red)}
+
+/* gates */
+.gates{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:9px;overflow:hidden}
+@media(max-width:900px){.gates{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){.gates{grid-template-columns:minmax(0,1fr)}}
+.gate{background:var(--panel);padding:22px}
+.gate .g{font-family:var(--mono);font-size:1.5rem;color:var(--rule-2);line-height:1;margin-bottom:12px}
+.gate p{margin-top:7px;font-size:.89rem;color:var(--muted)}
+
+/* integrity callout */
+.integ{border:1px solid var(--red);border-radius:10px;background:var(--red-soft);padding:clamp(24px,3.4vw,40px);display:grid;grid-template-columns:minmax(0,1fr) auto;gap:30px;align-items:center}
+@media(max-width:760px){.integ{grid-template-columns:minmax(0,1fr)}}
+.integ h3{font-family:var(--mono);font-size:.94rem;color:var(--red-ink);font-weight:500}
+.integ p{margin-top:11px;color:var(--ink-2);font-size:.96rem;max-width:62ch}
+.zero{font-family:var(--mono);font-size:clamp(3rem,7vw,4.6rem);color:var(--red);line-height:1;font-variant-numeric:slashed-zero}
+.zero small{display:block;font-size:.72rem;color:var(--red-ink);letter-spacing:.02em;margin-top:7px;text-align:center}
+
+/* code */
+.code{background:var(--ink);color:#E8EDE9;border-radius:9px;padding:20px 22px;font-family:var(--mono);font-size:.84rem;line-height:1.75;overflow-x:auto}
+.code .c{color:#8A978E}
+.code .p{color:#D9A441}
+.code .s{color:#9FC2A8}
+
+/* status */
+.status{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:9px;overflow:hidden}
+@media(max-width:760px){.status{grid-template-columns:minmax(0,1fr)}}
+.st{background:var(--panel);padding:clamp(20px,2.6vw,28px)}
+.st h3{margin-bottom:14px}
+.st ul{margin:0;padding:0;list-style:none;display:grid;gap:9px}
+.st li{font-size:.92rem;color:var(--ink-2);display:grid;grid-template-columns:18px minmax(0,1fr);gap:9px;align-items:baseline}
+.st li::before{content:"";font-family:var(--mono);font-size:.82rem}
+.st.done li::before{content:"✓";color:var(--green)}
+.st.todo li::before{content:"·";color:var(--muted)}
+.st.todo li{color:var(--muted)}
+
+/* limitations */
+.lim{border:1px solid var(--rule-2);border-radius:9px;background:var(--panel);padding:clamp(22px,3vw,32px)}
+.lim ul{margin:16px 0 0;padding:0;list-style:none;display:grid;gap:11px}
+.lim li{font-size:.94rem;color:var(--muted);padding-left:17px;position:relative}
+.lim li::before{content:"\2022";position:absolute;left:0;color:var(--rule-2)}
+.lim b{color:var(--ink);font-weight:500}
+
+/* footer */
+footer{border-top:1px solid var(--rule);padding:46px 0 60px;background:var(--paper-2)}
+.foot{display:flex;flex-wrap:wrap;gap:26px;justify-content:space-between;align-items:flex-start}
+.foot p{font-size:.86rem;color:var(--muted);max-width:46ch}
+.foot nav{display:flex;gap:22px;flex-wrap:wrap}
+.foot nav a{font-size:.88rem;color:var(--muted);text-decoration:none}
+.foot nav a:hover{color:var(--ink);text-decoration:underline}
+
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}
+  html{scroll-behavior:auto}
+}
+
+/* ---------- document pages ---------- */
+.doc{padding:clamp(44px,6vw,80px) 0 clamp(60px,8vw,100px)}
+.doc-wrap{max-width:760px;margin-inline:auto;padding-inline:var(--gutter)}
+.doc h1{font-size:clamp(2.1rem,4.4vw,3.1rem);margin-bottom:18px}
+.doc .sub{color:var(--muted);font-size:1.05rem;max-width:58ch}
+.doc h2{font-size:clamp(1.3rem,2.2vw,1.65rem);margin:48px 0 14px;padding-top:26px;border-top:1px solid var(--rule)}
+.doc h3{margin:30px 0 10px;font-size:1.02rem}
+.doc p{margin:14px 0;color:var(--ink-2);line-height:1.72}
+.doc ul,.doc ol{margin:14px 0;padding-left:22px;color:var(--ink-2);line-height:1.72}
+.doc li{margin:8px 0}
+.doc li::marker{color:var(--rule-2)}
+.doc b,.doc strong{font-weight:600;color:var(--ink)}
+.doc code{font-family:var(--mono);font-size:.88em;background:var(--paper-2);border:1px solid var(--rule);border-radius:4px;padding:1px 5px}
+.doc pre{background:var(--ink);color:#E8EDE9;border-radius:9px;padding:18px 20px;overflow-x:auto;margin:20px 0}
+.doc pre code{background:none;border:0;padding:0;color:inherit;font-size:.84rem;line-height:1.7}
+.doc blockquote{margin:22px 0;padding:4px 0 4px 20px;border-left:2px solid var(--red);color:var(--ink);font-family:var(--serif);font-size:1.08rem}
+.doc .tbl-wrap{margin:22px 0}
+.doc table{min-width:480px}
+.crumb{font-family:var(--mono);font-size:.78rem;color:var(--muted);margin-bottom:20px}
+.crumb a{text-decoration:none}
+.crumb a:hover{color:var(--ink);text-decoration:underline}
+.note{border:1px solid var(--rule-2);background:var(--panel);border-radius:9px;padding:20px 22px;margin:24px 0}
+.note.red{border-color:var(--red);background:var(--red-soft)}
+.note p{margin:0;font-size:.95rem}
+.note p+p{margin-top:11px}
+.toc{border:1px solid var(--rule);background:var(--panel);border-radius:9px;padding:18px 22px;margin:28px 0}
+.toc ol{margin:0;padding-left:20px;font-size:.93rem}
+.toc li{margin:5px 0}
+.toc a{text-decoration:none;color:var(--ink-2)}
+.toc a:hover{color:var(--red);text-decoration:underline}
+</style>
+</head>
+<body>
+<header class="nav">
+  <div class="wrap">
+    <a class="mark" href="/">
+      <svg width="19" height="19" viewBox="0 0 100 100" aria-hidden="true">
+        <line x1="50" y1="12" x2="50" y2="88" stroke="currentColor" stroke-width="8"/>
+        <line x1="12" y1="34" x2="88" y2="34" stroke="currentColor" stroke-width="6"/>
+        <line x1="12" y1="62" x2="40" y2="62" stroke="#B5362C" stroke-width="8"/>
+      </svg>
+      LossLedger
+    </a>
+    <nav>
+      <a href="/#problem">The problem</a>
+      <a href="/#evidence">Evidence</a>
+      <a href="/#method">How it judges</a>
+      <a href="/#status">Status</a>
+      <a href="/methodology">Methodology</a>
+    </nav>
+    <a class="gh" href="https://github.com/Vishv07/Lossledger">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+      GitHub
+    </a>
+  </div>
+</header>
+<main class="doc">
+<div class="doc-wrap">
+<p class="crumb"><a href="/">LossLedger</a> / disclosure policy</p>
+
+<h1>Disclosure policy</h1>
+<p class="sub">LossLedger exists to find delivery bugs in other people's software. How those findings are handled decides whether this project is a contribution or a nuisance.</p>
+
+<h2 id="finding">What counts as a finding</h2>
+<p>A <code>MISSING</code> or <code>DUP_BUG</code> result against a named collector or store version that reproduces <b>10 out of 10</b> times from a committed scenario, on default or explicitly stated configuration.</p>
+<p>Anything that does not reproduce 10 out of 10 is not a finding. Scenarios whose verdicts vary across replays are labelled FLAKY, reported separately, and never published.</p>
+
+<h2 id="process">The process</h2>
+<ol>
+  <li><b>Maintainers first, privately.</b> The security contact if the project designates one, otherwise the issue tracker. The report includes the scenario, the seed, the pinned versions, and a one-command reproduction.</li>
+  <li><b>14 days, or until fixed or acknowledged, whichever is sooner.</b> During that window the public matrix shows the cell as "1 issue under disclosure" without the detail.</li>
+  <li><code>ORDER</code> and <code>LATE</code> findings may be filed publicly straight away. They are bugs, not hazards.</li>
+  <li><b>Configuration defaults are described as defaults.</b> A finding about a default cooldown is reported as "default-config behaviour", never as "X is broken", and the tuned-config result is shown beside it.</li>
+  <li><b>Re-test posts after a fix are mandatory.</b> They are the half of the loop that builds the alliance.</li>
+</ol>
+
+<h2 id="who">Who publishes</h2>
+<div class="note">
+  <p><b>The owner files and publishes. No exceptions.</b> An implementing agent drafts findings and stops there.</p>
+</div>
+
+<h2 id="tone">Tone</h2>
+<p>Reports praise what passed as loudly as what failed. Methodology first, findings second, zero gloating. A report that only lists failures is marketing, not measurement.</p>
+
+<h2 id="security">Reporting a vulnerability in LossLedger itself</h2>
+<p>Open a draft security advisory on the repository, or contact the owner privately. Please do not open a public issue first.</p>
+<p>The emitter writes files only inside directories you configure, resolving that root through symlinks once at startup and refusing every path that escapes it. The verifier is read-only against your stores by construction: the sink interface exposes no write method. Neither component requires root.</p>
+<p>The shared signing key keeps foreign or forged lines out of the ledger. It is not a confidentiality boundary, and the truncated signature on each line is not sized to be one. It is read from the environment rather than a config file, so it stays out of the files people paste into issues, and it never appears in metrics, reports or logs.</p>
+
+</div>
+</main>
+<footer>
+  <div class="wrap foot">
+    <div>
+      <a class="mark" href="/" style="margin-bottom:12px">
+        <svg width="17" height="17" viewBox="0 0 100 100" aria-hidden="true">
+          <line x1="50" y1="12" x2="50" y2="88" stroke="currentColor" stroke-width="8"/>
+          <line x1="12" y1="34" x2="88" y2="34" stroke="currentColor" stroke-width="6"/>
+          <line x1="12" y1="62" x2="40" y2="62" stroke="#B5362C" stroke-width="8"/>
+        </svg>
+        LossLedger
+      </a>
+      <p>Double-entry bookkeeping for logs. Sent is one side of the ledger, arrived is the other, and the books must balance. Apache-2.0.</p>
+    </div>
+    <nav>
+      <a href="https://github.com/Vishv07/Lossledger">Source</a>
+      <a href="/methodology">Methodology</a>
+      <a href="/methodology#bisection">How it works</a>
+      <a href="/disclosure">Disclosure policy</a>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,854 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LossLedger: double-entry bookkeeping for logs</title>
+<meta name="description" content="A black-box delivery auditor for log pipelines. Signed canary lines in, exact gap ranges out. Proves whether your pipeline delivers what you wrote.">
+<meta property="og:title" content="LossLedger">
+<meta property="og:description" content="Double-entry bookkeeping for logs. Sent is one side of the ledger, arrived is the other, and the books must balance.">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%23F0F3EE'/><line x1='50' y1='14' x2='50' y2='86' stroke='%2312171A' stroke-width='7'/><line x1='14' y1='34' x2='86' y2='34' stroke='%2312171A' stroke-width='5'/><line x1='14' y1='62' x2='40' y2='62' stroke='%23B5362C' stroke-width='7'/></svg>">
+
+<style>
+:root{
+  /* Pale columnar accounting pad. The paper is the first thing that says
+     "ledger" before a single word is read. */
+  --paper:#F0F3EE; --paper-2:#F7F9F5; --panel:#FCFDFA;
+  --ink:#12171A; --ink-2:#333C37; --muted:#5A635C;
+  --rule:#D5DFD3; --rule-2:#BDC9BA;
+  /* Red ink is the only accent, used the way an accountant uses it: to mark a
+     discrepancy. A balanced book gets no colour at all. */
+  --red:#B5362C; --red-ink:#8F2A22; --red-soft:#F7E9E7;
+  --green:#2F5D45;
+
+  --serif:'IBM Plex Serif',Georgia,serif;
+  --sans:'IBM Plex Sans',system-ui,-apple-system,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;
+
+  --gutter:clamp(20px,5vw,72px);
+  --maxw:1180px;
+}
+*,*::before,*::after{box-sizing:border-box}
+html,body{overflow-x:clip}
+html{scroll-behavior:smooth;scroll-padding-top:84px;-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--paper);color:var(--ink);
+  font-family:var(--sans);font-size:17px;line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+  /* The faint horizontal ruling of ledger paper, under everything. */
+  background-image:repeating-linear-gradient(to bottom,transparent 0,transparent 35px,rgba(18,23,26,.035) 35px,rgba(18,23,26,.035) 36px);
+}
+h1,h2,h3{margin:0;font-family:var(--serif);font-weight:600;letter-spacing:-.018em;line-height:1.1;text-wrap:balance}
+h1{font-size:clamp(2.6rem,6.2vw,4.6rem);line-height:1.02;letter-spacing:-.03em}
+h2{font-size:clamp(1.85rem,3.4vw,2.8rem)}
+h3{font-size:1.1rem;font-family:var(--sans);font-weight:600;letter-spacing:-.005em}
+p{margin:0;text-wrap:pretty}
+a{color:inherit;text-decoration-thickness:1px;text-underline-offset:3px;text-decoration-color:var(--rule-2)}
+a:hover{text-decoration-color:var(--red)}
+:focus-visible{outline:2px solid var(--red);outline-offset:3px;border-radius:2px}
+.wrap{max-width:var(--maxw);margin-inline:auto;padding-inline:var(--gutter)}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums slashed-zero}
+.mut{color:var(--muted)}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+
+/* ---------- nav ---------- */
+.nav{position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--paper) 90%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--rule)}
+.nav .wrap{display:flex;align-items:center;gap:18px;height:64px}
+.mark{display:flex;align-items:center;gap:10px;font-family:var(--serif);font-weight:600;font-size:1.06rem;letter-spacing:-.02em;text-decoration:none;white-space:nowrap}
+.mark svg{flex:0 0 auto}
+.nav nav{margin-left:auto;display:flex;gap:4px}
+.nav nav a{font-size:.9rem;color:var(--muted);text-decoration:none;padding:7px 11px;border-radius:5px}
+.nav nav a:hover{color:var(--ink);background:var(--paper-2)}
+@media(max-width:820px){.nav nav{display:none}}
+.gh{display:inline-flex;align-items:center;gap:7px;font-size:.88rem;padding:8px 14px;border:1px solid var(--rule-2);border-radius:6px;text-decoration:none;background:var(--panel);white-space:nowrap}
+.gh:hover{border-color:var(--ink);background:var(--paper-2)}
+@media(max-width:820px){.nav nav{display:none}.gh{margin-left:auto}}
+
+/* ---------- hero ---------- */
+.hero{padding:clamp(48px,7vw,92px) 0 clamp(40px,6vw,72px)}
+.hero-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.02fr);gap:clamp(32px,5vw,64px);align-items:center}
+@media(max-width:980px){.hero-grid{grid-template-columns:minmax(0,1fr)}}
+.tag{display:inline-flex;align-items:center;gap:9px;font-family:var(--mono);font-size:.76rem;color:var(--muted);border:1px solid var(--rule-2);border-radius:999px;padding:4px 12px;margin-bottom:22px}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--green);flex:0 0 auto}
+.lede{font-size:clamp(1.07rem,1.6vw,1.24rem);color:var(--ink-2);margin-top:22px;max-width:50ch;line-height:1.55}
+.lede b{font-weight:600;color:var(--ink)}
+.cta{display:flex;flex-wrap:wrap;gap:12px;margin-top:30px}
+.btn{display:inline-flex;align-items:center;gap:9px;font-size:.95rem;font-weight:500;padding:12px 20px;border-radius:7px;text-decoration:none;border:1px solid var(--ink);background:var(--ink);color:var(--paper);transition:background .16s,border-color .16s}
+.btn:hover{background:#000;border-color:#000}
+.btn-2{background:transparent;color:var(--ink);border-color:var(--rule-2)}
+.btn-2:hover{background:var(--panel);border-color:var(--ink)}
+
+/* ---------- the live ledger ---------- */
+.ledger{background:var(--panel);border:1px solid var(--rule-2);border-radius:10px;overflow:hidden;box-shadow:0 1px 2px rgba(18,23,26,.05)}
+.ledger-head{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:11px 16px;border-bottom:1px solid var(--rule);background:var(--paper-2)}
+.ledger-title{font-family:var(--mono);font-size:.78rem;color:var(--muted)}
+.ledger-live{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:.72rem;color:var(--muted)}
+.pulse{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+.cols{display:grid;grid-template-columns:1fr 1px 1fr;font-family:var(--mono);font-size:.82rem}
+.spine{background:var(--rule-2)}
+.col-head{padding:9px 16px;font-size:.72rem;color:var(--muted);border-bottom:1px solid var(--rule);letter-spacing:.02em}
+.col-head.r{text-align:right}
+.rows{height:272px;overflow:hidden;position:relative}
+.row{display:flex;align-items:baseline;gap:10px;padding:5px 16px;height:28px;white-space:nowrap}
+.row.r{justify-content:flex-end}
+.seq{color:var(--ink)}
+.meta{font-size:.72rem;color:var(--muted)}
+.row.gap{color:var(--red);background:var(--red-soft)}
+.row.gap .seq{color:var(--red-ink);font-weight:500}
+.row.gap .meta{color:var(--red)}
+.row.wait .meta{color:var(--muted)}
+.row.enter{animation:slide .36s cubic-bezier(.16,1,.3,1) both}
+@keyframes slide{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.balance{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--rule);background:var(--paper-2)}
+.bal{padding:12px 16px;border-right:1px solid var(--rule)}
+.bal:last-child{border-right:0}
+.bal dt{font-size:.68rem;color:var(--muted);margin-bottom:3px;font-family:var(--sans)}
+.bal dd{margin:0;font-family:var(--mono);font-size:1.12rem;font-variant-numeric:tabular-nums slashed-zero}
+.bal.is-bad dd{color:var(--red)}
+@media(max-width:520px){.balance{grid-template-columns:repeat(2,1fr)}.bal:nth-child(2){border-right:0}.bal:nth-child(1),.bal:nth-child(2){border-bottom:1px solid var(--rule)}.rows{height:224px}}
+.cap{font-family:var(--mono);font-size:.73rem;color:var(--muted);margin-top:11px;text-align:center}
+
+/* ---------- sections ---------- */
+section{padding:clamp(56px,8vw,104px) 0;border-top:1px solid var(--rule)}
+.shead{max-width:60ch;margin-bottom:clamp(30px,4vw,48px)}
+.shead p{margin-top:14px;color:var(--muted);font-size:1.03rem}
+.kicker{font-family:var(--mono);font-size:.74rem;color:var(--red);margin-bottom:12px}
+
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:9px;overflow:hidden}
+@media(max-width:760px){.grid2{grid-template-columns:minmax(0,1fr)}}
+.cell{background:var(--panel);padding:clamp(20px,2.6vw,30px)}
+.cell .n{font-family:var(--mono);font-size:.74rem;color:var(--muted);margin-bottom:10px}
+.cell p{margin-top:9px;color:var(--muted);font-size:.95rem}
+
+/* ---------- diagrams ---------- */
+.fig{background:var(--panel);border:1px solid var(--rule-2);border-radius:10px;padding:clamp(18px,2.6vw,30px);overflow:hidden}
+.fig svg{width:100%;height:auto;display:block}
+.fig figcaption{font-family:var(--mono);font-size:.74rem;color:var(--muted);margin-top:16px;padding-top:14px;border-top:1px solid var(--rule);line-height:1.6}
+.d-lab{font-family:'IBM Plex Mono',monospace;font-size:12px;fill:var(--muted)}
+.d-ttl{font-family:'IBM Plex Mono',monospace;font-size:13px;fill:var(--ink)}
+.d-sm{font-family:'IBM Plex Mono',monospace;font-size:10.5px;fill:var(--muted)}
+.d-red{fill:var(--red)}
+.d-box{fill:var(--paper-2);stroke:var(--rule-2);stroke-width:1}
+.d-box-ink{fill:var(--ink);stroke:none}
+.d-box-red{fill:var(--red-soft);stroke:var(--red);stroke-width:1}
+.d-line{stroke:var(--rule-2);stroke-width:1.5;fill:none}
+.d-flow{stroke:var(--ink);stroke-width:1.5;fill:none}
+.d-flow-red{stroke:var(--red);stroke-width:1.5;fill:none}
+.d-dash{stroke:var(--muted);stroke-width:1.25;fill:none;stroke-dasharray:4 4}
+.d-zone{fill:none;stroke:var(--rule-2);stroke-width:1.25;stroke-dasharray:6 5}
+.d-arc{fill:none;stroke:var(--red);stroke-width:1.5}
+@media(max-width:620px){.d-lab{font-size:15px}.d-ttl{font-size:16px}.d-sm{font-size:13px}}
+
+/* evidence */
+.ev{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:9px;overflow:hidden}
+.ev-row{background:var(--panel);display:grid;grid-template-columns:168px minmax(0,1fr) auto;gap:22px;padding:19px clamp(18px,2.4vw,26px);align-items:baseline}
+@media(max-width:820px){.ev-row{grid-template-columns:minmax(0,1fr);gap:7px}}
+.ev-src{font-family:var(--mono);font-size:.8rem;color:var(--ink)}
+.ev-txt{color:var(--ink-2);font-size:.95rem}
+.ev-fig{font-family:var(--mono);font-size:.82rem;color:var(--red);white-space:nowrap}
+
+/* taxonomy table */
+.tbl-wrap{overflow-x:auto;border:1px solid var(--rule);border-radius:9px;background:var(--panel)}
+table{width:100%;border-collapse:collapse;font-size:.93rem;min-width:620px}
+th,td{text-align:left;padding:13px 18px;border-bottom:1px solid var(--rule)}
+tbody tr:last-child td{border-bottom:0}
+th{font-size:.74rem;color:var(--muted);font-weight:500;background:var(--paper-2)}
+td.sev,th.sev{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.an{font-family:var(--mono);font-size:.86rem}
+.an.bad{color:var(--red)}
+
+/* gates */
+.gates{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:9px;overflow:hidden}
+@media(max-width:900px){.gates{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){.gates{grid-template-columns:minmax(0,1fr)}}
+.gate{background:var(--panel);padding:22px}
+.gate .g{font-family:var(--mono);font-size:1.5rem;color:var(--rule-2);line-height:1;margin-bottom:12px}
+.gate p{margin-top:7px;font-size:.89rem;color:var(--muted)}
+
+/* integrity callout */
+.integ{border:1px solid var(--red);border-radius:10px;background:var(--red-soft);padding:clamp(24px,3.4vw,40px);display:grid;grid-template-columns:minmax(0,1fr) auto;gap:30px;align-items:center}
+@media(max-width:760px){.integ{grid-template-columns:minmax(0,1fr)}}
+.integ h3{font-family:var(--mono);font-size:.94rem;color:var(--red-ink);font-weight:500}
+.integ p{margin-top:11px;color:var(--ink-2);font-size:.96rem;max-width:62ch}
+.zero{font-family:var(--mono);font-size:clamp(3rem,7vw,4.6rem);color:var(--red);line-height:1;font-variant-numeric:slashed-zero}
+.zero small{display:block;font-size:.72rem;color:var(--red-ink);letter-spacing:.02em;margin-top:7px;text-align:center}
+
+/* code */
+.code{background:var(--ink);color:#E8EDE9;border-radius:9px;padding:20px 22px;font-family:var(--mono);font-size:.84rem;line-height:1.75;overflow-x:auto}
+.code .c{color:#8A978E}
+.code .p{color:#D9A441}
+.code .s{color:#9FC2A8}
+
+/* status */
+.status{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:9px;overflow:hidden}
+@media(max-width:760px){.status{grid-template-columns:minmax(0,1fr)}}
+.st{background:var(--panel);padding:clamp(20px,2.6vw,28px)}
+.st h3{margin-bottom:14px}
+.st ul{margin:0;padding:0;list-style:none;display:grid;gap:9px}
+.st li{font-size:.92rem;color:var(--ink-2);display:grid;grid-template-columns:18px minmax(0,1fr);gap:9px;align-items:baseline}
+.st li::before{content:"";font-family:var(--mono);font-size:.82rem}
+.st.done li::before{content:"✓";color:var(--green)}
+.st.todo li::before{content:"·";color:var(--muted)}
+.st.todo li{color:var(--muted)}
+
+/* limitations */
+.lim{border:1px solid var(--rule-2);border-radius:9px;background:var(--panel);padding:clamp(22px,3vw,32px)}
+.lim ul{margin:16px 0 0;padding:0;list-style:none;display:grid;gap:11px}
+.lim li{font-size:.94rem;color:var(--muted);padding-left:17px;position:relative}
+.lim li::before{content:"\2022";position:absolute;left:0;color:var(--rule-2)}
+.lim b{color:var(--ink);font-weight:500}
+
+/* footer */
+footer{border-top:1px solid var(--rule);padding:46px 0 60px;background:var(--paper-2)}
+.foot{display:flex;flex-wrap:wrap;gap:26px;justify-content:space-between;align-items:flex-start}
+.foot p{font-size:.86rem;color:var(--muted);max-width:46ch}
+.foot nav{display:flex;gap:22px;flex-wrap:wrap}
+.foot nav a{font-size:.88rem;color:var(--muted);text-decoration:none}
+.foot nav a:hover{color:var(--ink);text-decoration:underline}
+
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}
+  html{scroll-behavior:auto}
+}
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="mark" href="#top">
+      <svg width="19" height="19" viewBox="0 0 100 100" aria-hidden="true">
+        <line x1="50" y1="12" x2="50" y2="88" stroke="currentColor" stroke-width="8"/>
+        <line x1="12" y1="34" x2="88" y2="34" stroke="currentColor" stroke-width="6"/>
+        <line x1="12" y1="62" x2="40" y2="62" stroke="#B5362C" stroke-width="8"/>
+      </svg>
+      LossLedger
+    </a>
+    <nav>
+      <a href="#problem">The problem</a>
+      <a href="#evidence">Evidence</a>
+      <a href="#method">How it judges</a>
+      <a href="#status">Status</a>
+      <a href="/methodology">Methodology</a>
+    </nav>
+    <a class="gh" href="https://github.com/Vishv07/Lossledger">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+      GitHub
+    </a>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- ============ HERO ============ -->
+  <div class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <span class="tag"><span class="dot"></span>M1 complete · pre-release</span>
+        <h1>Your log pipeline says nothing was lost.</h1>
+        <p class="lede">
+          It would say that either way. Per-component counters can only count the drops a component <b>notices</b>, and the expensive losses are the ones nothing notices.
+          LossLedger writes signed, numbered canary lines through your real pipeline and asks every store which numbers it actually holds.
+        </p>
+        <div class="cta">
+          <a class="btn" href="https://github.com/Vishv07/Lossledger">Read the source</a>
+          <a class="btn btn-2" href="#method">How it decides something was lost</a>
+        </div>
+      </div>
+
+      <div>
+        <div class="ledger">
+          <div class="ledger-head">
+            <span class="ledger-title">node-a · epoch 01JCV8K2M4</span>
+            <span class="ledger-live"><span class="pulse"></span>auditing</span>
+          </div>
+          <div class="cols">
+            <div>
+              <div class="col-head">sent</div>
+              <div class="rows" id="sent" aria-hidden="true"></div>
+            </div>
+            <div class="spine"></div>
+            <div>
+              <div class="col-head r">arrived</div>
+              <div class="rows" id="arrived" aria-hidden="true"></div>
+            </div>
+          </div>
+          <dl class="balance">
+            <div class="bal"><dt>emitted</dt><dd class="num" id="b-emit">0</dd></div>
+            <div class="bal"><dt>arrived</dt><dd class="num" id="b-arr">0</dd></div>
+            <div class="bal" id="bal-missing"><dt>missing</dt><dd class="num" id="b-miss">0</dd></div>
+            <div class="bal"><dt>verdict</dt><dd class="num" id="b-verdict">CLEAN</dd></div>
+          </dl>
+        </div>
+        <p class="cap">A simulation of the ledger, not live data. Sequences settle before absence is judged.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ PROBLEM ============ -->
+  <section id="problem">
+    <div class="wrap">
+      <div class="shead">
+        <p class="kicker">the four invisible classes</p>
+        <h2>Losses nobody counts</h2>
+        <p>Every hop in a log pipeline can drop data, and each hop's self-reporting covers only the failure modes its authors anticipated. These four recur across vendors and years.</p>
+      </div>
+      <div class="grid2">
+        <div class="cell">
+          <p class="n">01</p>
+          <h3>Discovery races</h3>
+          <p>A short-lived pod writes and exits before the agent's file-discovery interval fires. The file is gone before anything tailed it, and no counter anywhere moves.</p>
+        </div>
+        <div class="cell">
+          <p class="n">02</p>
+          <h3>Rotation races</h3>
+          <p>A file rotates while the agent is mid-read. Lines in the gap window vanish. Under load, records get split or dropped with nothing recording it.</p>
+        </div>
+        <div class="cell">
+          <p class="n">03</p>
+          <h3>Semantic drops</h3>
+          <p>The source deliberately skips data it considers invalid. A line whose timestamp precedes the previous one, for instance, which stdout and stderr interleaving triggers constantly. The source does not call this an error, so nothing is logged.</p>
+        </div>
+        <div class="cell">
+          <p class="n">04</p>
+          <h3>Ingest rejections</h3>
+          <p>The store rejects a document for a mapping conflict, malformed JSON or an oversized line, after the agent already counted it as delivered.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ ARCHITECTURE ============ -->
+  <section id="how">
+    <div class="wrap">
+      <div class="shead">
+        <p class="kicker">the honest boundary</p>
+        <h2>Nothing reaches into your pipeline</h2>
+        <p>The emitter is only another log producer. The verifier is only another query client. The canary travels the same path your application's logs do, so every gap it finds is one they would have hit too.</p>
+      </div>
+
+      <figure class="fig">
+        <svg viewBox="0 0 940 326" role="img" aria-labelledby="arch-t arch-d">
+          <title id="arch-t">LossLedger architecture</title>
+          <desc id="arch-d">An emitter writes canary lines into the user's own pipeline, which carries them to the stores. A verifier queries only the stores. Neither component reaches inside the pipeline.</desc>
+          <defs>
+            <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="#12171A"/>
+            </marker>
+            <marker id="ar-m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="#5A635C"/>
+            </marker>
+          </defs>
+
+          <!-- emitter -->
+          <rect class="d-box-ink" x="4" y="92" width="118" height="54" rx="6"/>
+          <text class="d-ttl" x="63" y="116" text-anchor="middle" fill="#F0F3EE">emitter</text>
+          <text class="d-sm" x="63" y="133" text-anchor="middle" fill="#9FB0A4">seq + epoch + hmac</text>
+          <text class="d-sm" x="63" y="166" text-anchor="middle">5 shape profiles</text>
+          <text class="d-sm" x="63" y="181" text-anchor="middle">rotates its own files</text>
+
+          <!-- the untouched zone -->
+          <rect class="d-zone" x="160" y="34" width="420" height="172" rx="9"/>
+          <text class="d-lab" x="370" y="24" text-anchor="middle">your pipeline, untouched</text>
+
+          <rect class="d-box" x="186" y="96" width="112" height="46" rx="5"/>
+          <text class="d-lab" x="242" y="117" text-anchor="middle" fill="#12171A">file / stdout</text>
+          <text class="d-sm" x="242" y="132" text-anchor="middle">journald</text>
+
+          <rect class="d-box" x="342" y="96" width="122" height="46" rx="5"/>
+          <text class="d-lab" x="403" y="117" text-anchor="middle" fill="#12171A">collector</text>
+          <text class="d-sm" x="403" y="132" text-anchor="middle">tail, parse, buffer</text>
+
+          <rect class="d-box" x="492" y="103" width="66" height="32" rx="5"/>
+          <text class="d-sm" x="525" y="123" text-anchor="middle">broker</text>
+
+          <!-- loss points -->
+          <circle cx="320" cy="119" r="4.5" class="d-red"/>
+          <circle cx="478" cy="119" r="4.5" class="d-red"/>
+          <text class="d-sm d-red" x="320" y="162" text-anchor="middle">rotation</text>
+          <text class="d-sm d-red" x="320" y="176" text-anchor="middle">race</text>
+          <text class="d-sm d-red" x="478" y="162" text-anchor="middle">semantic</text>
+          <text class="d-sm d-red" x="478" y="176" text-anchor="middle">drop</text>
+
+          <!-- flow through the pipeline -->
+          <path class="d-flow" d="M126 119 H182" marker-end="url(#ar)"/>
+          <path class="d-flow" d="M300 119 H338" marker-end="url(#ar)"/>
+          <path class="d-flow" d="M466 119 H488" marker-end="url(#ar)"/>
+          <path class="d-flow" d="M560 119 H616" marker-end="url(#ar)"/>
+
+          <!-- sinks -->
+          <rect class="d-box" x="620" y="60" width="150" height="38" rx="5"/>
+          <text class="d-lab" x="695" y="84" text-anchor="middle" fill="#12171A">Elasticsearch</text>
+          <rect class="d-box" x="620" y="104" width="150" height="38" rx="5"/>
+          <text class="d-lab" x="695" y="128" text-anchor="middle" fill="#12171A">ClickHouse</text>
+          <rect class="d-box" x="620" y="148" width="150" height="38" rx="5"/>
+          <text class="d-lab" x="695" y="172" text-anchor="middle" fill="#12171A">Loki</text>
+          <circle cx="606" cy="79" r="4.5" class="d-red"/>
+          <text class="d-sm d-red" x="600" y="48" text-anchor="middle">ingest reject</text>
+
+          <!-- verifier -->
+          <rect class="d-box-ink" x="700" y="246" width="236" height="60" rx="6"/>
+          <text class="d-ttl" x="818" y="270" text-anchor="middle" fill="#F0F3EE">verifier</text>
+          <text class="d-sm" x="818" y="288" text-anchor="middle" fill="#9FB0A4">count ranges, bisect, classify</text>
+
+          <!-- read-only queries from the sinks -->
+          <path class="d-dash" d="M790 190 V246" marker-end="url(#ar-m)"/>
+          <text class="d-sm" x="800" y="222">read only</text>
+
+          <!-- the ledger output -->
+          <path class="d-flow-red" d="M700 276 H596 V214" marker-end="url(#ar)" stroke="#B5362C"/>
+          <rect class="d-box-red" x="330" y="246" width="330" height="60" rx="6"/>
+          <text class="d-ttl" x="495" y="270" text-anchor="middle" fill="#8F2A22">seq 2041-2118 missing at 2 sinks</text>
+          <text class="d-sm" x="495" y="288" text-anchor="middle" fill="#B5362C">same gaps everywhere, so the loss is source side</text>
+          <path class="d-flow-red" d="M596 276 H666" />
+
+          <!-- what the emitter never does -->
+          <path class="d-dash" d="M63 196 V276 H318" stroke="#BDC9BA"/>
+          <text class="d-sm" x="66" y="296">the emitter only writes, it never reads a verdict</text>
+        </svg>
+        <figcaption>
+          Red dots mark the four structurally invisible loss classes. The verifier never reads collector internals and never consumes a collector's own counters as verdict input: those counters are the thing being audited.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ============ EVIDENCE ============ -->
+  <section id="evidence">
+    <div class="wrap">
+      <div class="shead">
+        <p class="kicker">documented, not hypothetical</p>
+        <h2>The counters lied, and someone measured it</h2>
+        <p>All four are public reports. In every one, the in and out counters agreed while logs went missing.</p>
+      </div>
+      <div class="ev">
+        <div class="ev-row">
+          <span class="ev-src">grafana/alloy #7076</span>
+          <span class="ev-txt">A user-run canary measured entries silently dropped over 14 hours because out-of-order timestamp lines were discarded. Zero errors reported anywhere.</span>
+          <span class="ev-fig">199 of 5,035 lost</span>
+        </div>
+        <div class="ev-row">
+          <span class="ev-src">fluent-bit #2509, #2955</span>
+          <span class="ev-txt">Pods silently stopped shipping for hours. "I didn't find any errors in fluent bit as well as elasticsearch." In and out counters matched throughout.</span>
+          <span class="ev-fig">hours, unnoticed</span>
+        </div>
+        <div class="ev-row">
+          <span class="ev-src">Elastic Discuss</span>
+          <span class="ev-txt">Filebeat to Logstash to Elasticsearch losing logs "often and sometimes in a massive way", while Logstash in, filtered and out stats were "almost the same".</span>
+          <span class="ev-fig">counters agreed</span>
+        </div>
+        <div class="ev-row">
+          <span class="ev-src">UK MoJ Cloud Platform</span>
+          <span class="ev-txt">The log store stopped receiving. A human noticed via Slack about 40 minutes later. The incident runbook closes with a single line.</span>
+          <span class="ev-fig">"not recovered"</span>
+        </div>
+      </div>
+      <p class="cap" style="text-align:left;margin-top:18px;max-width:72ch">
+        Four organisations independently built this harness internally: AWS runs release-blocking log-loss tests, Grafana built loki-canary, VictoriaMetrics built log-verifier, OpenTelemetry has an open request for it. None of them ships a generic, multi-collector, real-store version, because a neutral cross-vendor auditor belongs to nobody's roadmap.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============ METHOD ============ -->
+  <section id="method">
+    <div class="wrap">
+      <div class="shead">
+        <p class="kicker">an accusation is earned twice</p>
+        <h2>Four gates before we call anything lost</h2>
+        <p>A pipeline is asynchronous. At any instant some lines are legitimately in flight. Calling those lost would be a false accusation, which is worse than a missed detection, because it destroys the credibility that makes detection worth reporting.</p>
+      </div>
+      <div class="gates">
+        <div class="gate">
+          <p class="g">01</p>
+          <h3>Within the epoch</h3>
+          <p>At or below the epoch's expected high-water mark. A crashed emitter truncates the epoch, so nothing past its last written sequence can be called lost.</p>
+        </div>
+        <div class="gate">
+          <p class="g">02</p>
+          <h3>Absent from the sink</h3>
+          <p>Queried directly from the store. Collector self-reports are never used as verdict input. A component only counts the drops it notices.</p>
+        </div>
+        <div class="gate">
+          <p class="g">03</p>
+          <h3>Past the settle window</h3>
+          <p>An adaptive delay per sink. Both inputs push the window outward only, so lengthening it can never create a new accusation.</p>
+        </div>
+        <div class="gate">
+          <p class="g">04</p>
+          <h3>Confirmed by a re-check</h3>
+          <p>A mandatory second query. Only a sequence that survives all four is reported missing, with exact ranges rather than a total.</p>
+        </div>
+      </div>
+
+      <figure class="fig" style="margin-top:28px">
+        <svg viewBox="0 0 940 268" role="img" aria-labelledby="tl-t tl-d">
+          <title id="tl-t">The life of one sequence number</title>
+          <desc id="tl-d">A timeline from emission. One sequence arrives inside the settle window and is clean. Another is still absent when the window closes, becomes provisional, survives a mandatory re-check, and only then is reported missing.</desc>
+          <defs>
+            <marker id="t-ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="#12171A"/>
+            </marker>
+          </defs>
+
+          <!-- settle window band -->
+          <rect x="128" y="36" width="392" height="150" fill="#F7F9F5" stroke="#D5DFD3" stroke-width="1" rx="4"/>
+          <path class="d-arc" d="M132 30 Q324 6 516 30"/>
+          <text class="d-lab" x="324" y="22" text-anchor="middle" fill="#B5362C">settle window</text>
+          <text class="d-sm" x="324" y="206" text-anchor="middle">clamp(max(sink_hint, p99 x 3), 5s, max_wait)</text>
+          <text class="d-sm" x="324" y="222" text-anchor="middle">lengthening it can only ever remove an accusation, never add one</text>
+
+          <!-- axis -->
+          <path class="d-line" d="M128 186 H912" marker-end="url(#t-ar)"/>
+          <line class="d-line" x1="128" y1="180" x2="128" y2="192"/>
+          <line class="d-line" x1="520" y1="180" x2="520" y2="192"/>
+          <line class="d-line" x1="700" y1="180" x2="700" y2="192"/>
+          <text class="d-sm" x="128" y="246" text-anchor="middle">emitted</text>
+          <text class="d-sm" x="520" y="246" text-anchor="middle">window closes</text>
+          <text class="d-sm" x="700" y="246" text-anchor="middle">re-check</text>
+          <text class="d-sm" x="880" y="246" text-anchor="end">time</text>
+
+          <!-- lane A: a sequence that arrives -->
+          <text class="d-lab" x="4" y="76" fill="#12171A">seq 2040</text>
+          <path class="d-flow" d="M128 86 H300"/>
+          <circle cx="300" cy="86" r="5.5" fill="#2F5D45"/>
+          <text class="d-sm" x="314" y="90">arrived at the sink, nothing to report</text>
+          <rect x="628" y="70" width="74" height="26" rx="4" fill="#EFF4EE" stroke="#BDC9BA"/>
+          <text class="d-sm" x="665" y="87" text-anchor="middle" fill="#2F5D45">CLEAN</text>
+
+          <!-- lane B: a sequence that never arrives -->
+          <text class="d-lab" x="4" y="140" fill="#12171A">seq 2041</text>
+          <path class="d-flow" d="M128 150 H520" stroke-dasharray="5 4"/>
+          <circle cx="128" cy="150" r="4" fill="#12171A"/>
+          <text class="d-sm" x="190" y="142">in flight, never accused</text>
+
+          <path class="d-flow-red" d="M520 150 H700" stroke-dasharray="5 4"/>
+          <circle cx="520" cy="150" r="5.5" fill="none" stroke="#B5362C" stroke-width="1.75"/>
+          <text class="d-sm d-red" x="534" y="142">provisional</text>
+
+          <circle cx="700" cy="150" r="5.5" fill="none" stroke="#B5362C" stroke-width="1.75"/>
+          <text class="d-sm d-red" x="714" y="142">still absent</text>
+          <path class="d-flow-red" d="M700 150 H812"/>
+          <rect x="816" y="134" width="96" height="30" rx="4" class="d-box-red"/>
+          <text class="d-lab" x="864" y="154" text-anchor="middle" fill="#8F2A22">MISSING</text>
+
+          <!-- the reversal -->
+          <path class="d-dash" d="M864 170 V186" stroke="#BDC9BA"/>
+          <text class="d-sm" x="912" y="268" text-anchor="end">if it arrives after this, false_missing increments and it is reclassified LATE</text>
+        </svg>
+        <figcaption>
+          Each condition closes off one way we could accuse a pipeline of a loss it did not cause. Most sequences sit in the first lane for their whole life and are cleared by a single range count.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ============ INTEGRITY ============ -->
+  <section>
+    <div class="wrap">
+      <div class="integ">
+        <div>
+          <h3>lossledger_false_missing_total</h3>
+          <p>
+            Counts sequences this verifier declared missing that later arrived. It is the shame counter, exported from day one and printed on every report whether it is zero or not.
+          </p>
+          <p>
+            A nonzero value means the harness accused a pipeline of losing data it went on to deliver. That is a bug in LossLedger, not in your pipeline, and it outranks every feature. You cannot publish a result from this tool without publishing this number beside it.
+          </p>
+        </div>
+        <div>
+          <div class="zero">0<small>required, always</small></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ COST ============ -->
+  <section id="cost">
+    <div class="wrap">
+      <div class="shead">
+        <p class="kicker">what auditing costs</p>
+        <h2>Expensive queries scale with loss, not with traffic</h2>
+        <p>Listing 173 million sequences a day would cost more than the pipeline being audited. So the verifier asks one wide question first, and only looks closer where the answer disagrees.</p>
+      </div>
+
+      <figure class="fig">
+        <svg viewBox="0 0 940 300" role="img" aria-labelledby="bi-t bi-d">
+          <title id="bi-t">Bisection over a sequence range</title>
+          <desc id="bi-d">A wide range is counted in one query. Halves whose count matches are cleared immediately. Only the halves that disagree are split further, until a narrow leaf is fetched in detail.</desc>
+
+          <!-- level 0 -->
+          <rect x="120" y="14" width="700" height="34" rx="4" class="d-box"/>
+          <text class="d-lab" x="470" y="36" text-anchor="middle" fill="#12171A">seq 1 to 1,000,000</text>
+          <text class="d-sm" x="828" y="36">1 count query</text>
+          <text class="d-sm d-red" x="112" y="36" text-anchor="end">999,812 of 1,000,000</text>
+
+          <path class="d-line" d="M470 48 V62 M296 62 H644 M296 62 V76 M644 62 V76"/>
+
+          <!-- level 1 -->
+          <rect x="128" y="76" width="336" height="34" rx="4" fill="#EFF4EE" stroke="#BDC9BA"/>
+          <text class="d-lab" x="296" y="98" text-anchor="middle" fill="#2F5D45">1 to 500,000 counts exactly, cleared</text>
+          <rect x="476" y="76" width="336" height="34" rx="4" class="d-box-red"/>
+          <text class="d-lab" x="644" y="98" text-anchor="middle" fill="#8F2A22">500,001 to 1,000,000 is short by 188</text>
+
+          <path class="d-line" d="M644 110 V124 M556 124 H732 M556 124 V138 M732 124 V138"/>
+
+          <!-- level 2 -->
+          <rect x="470" y="138" width="172" height="34" rx="4" fill="#EFF4EE" stroke="#BDC9BA"/>
+          <text class="d-sm" x="556" y="159" text-anchor="middle" fill="#2F5D45">cleared</text>
+          <rect x="650" y="138" width="172" height="34" rx="4" class="d-box-red"/>
+          <text class="d-sm" x="736" y="159" text-anchor="middle" fill="#8F2A22">short by 188</text>
+
+          <path class="d-line" d="M736 172 V186"/>
+          <text class="d-sm" x="752" y="190">repeats about 11 times</text>
+          <path class="d-line" d="M736 194 V208" stroke-dasharray="3 3"/>
+
+          <!-- leaf -->
+          <rect x="628" y="208" width="216" height="38" rx="4" class="d-box-red"/>
+          <text class="d-lab" x="736" y="226" text-anchor="middle" fill="#8F2A22">512 wide, fetch detail</text>
+          <text class="d-sm" x="736" y="240" text-anchor="middle" fill="#B5362C">seq 2,041 to 2,118 and 2,305 to 2,414</text>
+
+          <!-- tally -->
+          <line class="d-line" x1="120" y1="200" x2="560" y2="200"/>
+          <text class="d-ttl" x="120" y="226">about 24 queries</text>
+          <text class="d-sm" x="120" y="246">to account for a million sequences across one sink</text>
+          <text class="d-sm" x="120" y="262">A clean pipeline costs one count per source, per sink, per interval.</text>
+          <text class="d-sm" x="120" y="284">A detail fetch only ever happens where a count already disagreed.</text>
+        </svg>
+        <figcaption>
+          The figures are an illustration of the strategy, not a benchmark. Detail is fetched only at leaves below the threshold, which defaults to 512 sequences wide.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ============ TAXONOMY ============ -->
+  <section>
+    <div class="wrap">
+      <div class="shead">
+        <p class="kicker">severity is the interface</p>
+        <h2>Five verdicts, ordered</h2>
+        <p>The same ordering drives exit codes, CI budgets, report sorting and alert levels. A harness error exits 2, below every anomaly, so a crash can never be mistaken for a finding.</p>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr><th>Verdict</th><th>Meaning</th><th class="sev">Exit</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><span class="an bad">MISSING</span></td><td>Absent after the settle window and a mandatory re-check. Exact ranges reported.</td><td class="sev">40</td></tr>
+            <tr><td><span class="an bad">DUP_BUG</span></td><td>Duplication outside any replay window, or past the duplication factor bound.</td><td class="sev">30</td></tr>
+            <tr><td><span class="an">ORDER</span></td><td>Arrival order violated sequence order, or a multi-line event arrived partially.</td><td class="sev">20</td></tr>
+            <tr><td><span class="an">LATE</span></td><td>Arrived after the settle window but before max_wait.</td><td class="sev">10</td></tr>
+            <tr><td><span class="an">CLEAN</span></td><td>Every sequence accounted for exactly once.</td><td class="sev">0</td></tr>
+            <tr><td><span class="an">DUP_REPLAY</span></td><td>Expected at-least-once duplicate after a restart. Informational, never a failure.</td><td class="sev">0</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ QUICKSTART ============ -->
+  <section>
+    <div class="wrap">
+      <div class="shead">
+        <p class="kicker">try it in a minute</p>
+        <h2>Prove the harness before trusting it</h2>
+        <p>Two reference collectors ship in-tree. One copies faithfully and must come back clean. The other drops a known range, duplicates another and truncates multi-line events, and must be caught with exactly those ranges.</p>
+      </div>
+      <div class="code">
+git clone https://github.com/Vishv07/Lossledger
+<span class="c"># Build the binary.</span>
+go build -o lossledger ./cmd/lossledger
+export <span class="p">LOSSLEDGER_HMAC_KEY</span>=<span class="s">"any-shared-secret"</span>
+
+<span class="c"># Emit and verify against a directory acting as a store.</span>
+./lossledger run -dir /tmp/canary -count 1000
+
+<span class="c"># Then grade the harness itself against the reference pipelines.</span>
+./lossledger selfcheck
+<span class="c">#   [PASS] refbad missing ranges match the injected drops exactly</span>
+<span class="c">#   [PASS] refbad integrity metric is zero</span>
+<span class="c">#   14 of 14 checks passed</span>
+      </div>
+      <p class="cap" style="text-align:left;margin-top:16px;max-width:72ch">If that gate fails, nothing the build says about a real pipeline is worth reading. It runs in CI on every commit, and any change that flips it blocks the merge.</p>
+    </div>
+  </section>
+
+  <!-- ============ STATUS ============ -->
+  <section id="status">
+    <div class="wrap">
+      <div class="shead">
+        <p class="kicker">honest status</p>
+        <h2>M1 complete. Not yet usable against a real store.</h2>
+        <p>The core is built and proves itself against reference pipelines. The real store adapters are not written yet.</p>
+      </div>
+      <div class="status">
+        <div class="st done">
+          <h3>Working today</h3>
+          <ul>
+            <li>LL1 wire format with HMAC signing and forward-compatible parsing</li>
+            <li>Emitter with plain, JSON, stack-trace, oversize and interleave shapes</li>
+            <li>Self-rotating file output, stdout output, and the safety rails</li>
+            <li>Epoch handling that tells a clean shutdown from a crash</li>
+            <li>Roaring-bitmap ledgers, adaptive settle window, mandatory re-check</li>
+            <li>The full anomaly taxonomy and the bisecting verifier</li>
+            <li>Prometheus metrics, text and JSON gap reports</li>
+            <li>The filesink reference adapter and the self-validation gate</li>
+          </ul>
+        </div>
+        <div class="st todo">
+          <h3>Not built yet</h3>
+          <ul>
+            <li>Elasticsearch and OpenSearch adapter (M2)</li>
+            <li>ClickHouse adapter (M2)</li>
+            <li>Loki adapter (M4)</li>
+            <li>Collector testbed for Vector, Fluent Bit and OTel (M3)</li>
+            <li>The four fault injectors and gauntlet CI mode (M3)</li>
+            <li>The published cross-collector loss matrix (M4)</li>
+            <li>Kubernetes operator and Helm chart (post-v1)</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ LIMITATIONS ============ -->
+  <section>
+    <div class="wrap">
+      <div class="shead">
+        <p class="kicker">read before adopting</p>
+        <h2>Who this is not for</h2>
+      </div>
+      <div class="lim">
+        <p style="font-size:1rem;color:var(--ink-2)">
+          <b>Most teams tolerate one to two percent log loss without noticing</b>, because most log lines are never read. This is a tool for teams where logs are legally or contractually load-bearing, for platform teams who already build this internally, and for engineers mid-incident who just found the missing line. Thousands of deployments, not hundreds of thousands.
+        </p>
+        <ul>
+          <li>Logs only. No metrics, no traces.</li>
+          <li>Attribution is source-side versus sink-side only. Per-hop attribution across a broker is v2.</li>
+          <li>Linux is the target. The Go code is portable, but fault injection and journald are not.</li>
+          <li>No remediation. LossLedger proves loss, it does not repair it.</li>
+          <li>Canary lines cost money in billed stores. One node at 10 lines per second produces roughly 864,000 lines a day.</li>
+          <li><b>A clean result means this pipeline delivered these canaries under these conditions.</b> It is not a proof that nothing is ever lost.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <div>
+      <a class="mark" href="#top" style="margin-bottom:12px">
+        <svg width="17" height="17" viewBox="0 0 100 100" aria-hidden="true">
+          <line x1="50" y1="12" x2="50" y2="88" stroke="currentColor" stroke-width="8"/>
+          <line x1="12" y1="34" x2="88" y2="34" stroke="currentColor" stroke-width="6"/>
+          <line x1="12" y1="62" x2="40" y2="62" stroke="#B5362C" stroke-width="8"/>
+        </svg>
+        LossLedger
+      </a>
+      <p>Double-entry bookkeeping for logs. Sent is one side of the ledger, arrived is the other, and the books must balance. Apache-2.0.</p>
+    </div>
+    <nav>
+      <a href="https://github.com/Vishv07/Lossledger">Source</a>
+      <a href="/methodology">Methodology</a>
+      <a href="/methodology#bisection">How it works</a>
+      <a href="/disclosure">Disclosure policy</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+  var sentEl=document.getElementById('sent'),arrEl=document.getElementById('arrived');
+  if(!sentEl||!arrEl)return;
+
+  var MAXROWS=10, seq=4112, emitted=0, arrived=0, missing=0;
+  var pending=[]; // sequences written but not yet accounted for
+  var reduced=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  var bEmit=document.getElementById('b-emit'),bArr=document.getElementById('b-arr'),
+      bMiss=document.getElementById('b-miss'),bVer=document.getElementById('b-verdict'),
+      balMiss=document.getElementById('bal-missing');
+
+  function fmt(n){return n.toLocaleString('en-US');}
+
+  function push(el,html,cls){
+    var d=document.createElement('div');
+    d.className='row'+(cls?' '+cls:'')+(el===arrEl?' r':'')+(reduced?'':' enter');
+    d.innerHTML=html;
+    el.appendChild(d);
+    while(el.children.length>MAXROWS) el.removeChild(el.firstChild);
+    return d;
+  }
+
+  function tick(){
+    // Write one line.
+    seq++; emitted++;
+    var n=seq;
+    push(sentEl,'<span class="seq">'+n+'</span><span class="meta">shape=plain</span>');
+
+    // Most lines arrive. About one in fourteen does not, which is the thing
+    // the whole product exists to notice.
+    var lost = Math.random() < 0.072;
+    pending.push({seq:n,lost:lost,row:null,age:0});
+
+    bEmit.textContent=fmt(emitted);
+  }
+
+  function settleTick(){
+    for(var i=0;i<pending.length;i++){
+      var p=pending[i];
+      p.age++;
+
+      // Arrival, after a short and variable delay.
+      if(!p.lost && !p.row && p.age>=1){
+        arrived++;
+        p.row=push(arrEl,'<span class="meta">+'+(p.age*180)+'ms</span><span class="seq">'+p.seq+'</span>');
+        bArr.textContent=fmt(arrived);
+        pending.splice(i--,1);
+        continue;
+      }
+
+      // A line that has not arrived sits provisional while the settle window
+      // runs, and is only called missing once it has elapsed.
+      if(p.lost){
+        if(!p.row){
+          p.row=push(arrEl,'<span class="meta">settling</span><span class="seq">'+p.seq+'</span>','wait');
+        }else if(p.age===2){
+          p.row.querySelector('.meta').textContent='re-checking';
+        }else if(p.age>=3){
+          p.row.className='row r gap';
+          p.row.innerHTML='<span class="meta">MISSING</span><span class="seq">'+p.seq+'</span>';
+          missing++;
+          bMiss.textContent=fmt(missing);
+          balMiss.classList.add('is-bad');
+          bVer.textContent='MISSING';
+          bVer.style.color='var(--red)';
+          pending.splice(i--,1);
+        }
+      }
+    }
+  }
+
+  // Seed the ledger so it never reads as empty on arrival.
+  for(var i=0;i<6;i++){ tick(); settleTick(); settleTick(); }
+
+  if(reduced){
+    // With reduced motion the ledger shows a settled end state and stops.
+    for(var j=0;j<8;j++){ tick(); settleTick(); settleTick(); settleTick(); }
+    document.querySelector('.pulse').style.animation='none';
+  }else{
+    setInterval(function(){ tick(); settleTick(); },900);
+  }
+})();
+</script>
+</body>
+</html>
