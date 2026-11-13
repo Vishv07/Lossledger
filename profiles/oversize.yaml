@@ -1,0 +1,8 @@
+name: oversize
+description: >
+  A single very long line, past the point where collectors and stores start
+  truncating or rejecting. Padded with a repeating pattern so a truncation is
+  visible in the padding itself.
+kind: oversize
+prefix: "WARN  canary oversize "
+size_bytes: 65536

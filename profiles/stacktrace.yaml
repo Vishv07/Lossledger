@@ -1,0 +1,9 @@
+name: stacktrace
+description: >
+  A multi-line exception. The token sits on the first physical line and every
+  continuation carries an LLC marker declaring its index and the total, so a
+  partially delivered event is detectable from the sink side alone.
+kind: multiline
+prefix: "ERROR canary java.lang.IllegalStateException: "
+min_lines: 8
+max_lines: 40

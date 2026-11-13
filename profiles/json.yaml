@@ -1,0 +1,3 @@
+name: json
+description: One JSON object per line with the token in a message field.
+kind: json

@@ -1,0 +1,8 @@
+name: interleave
+description: >
+  Two streams writing alternately with deliberately non-monotonic timestamps.
+  This is the trigger for the silent out-of-order drop documented in
+  grafana/alloy issue 7076.
+kind: interleave
+prefix: "INFO  canary "
+backdate_nanos: 2000000000
