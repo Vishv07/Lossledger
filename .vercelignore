@@ -1,0 +1,13 @@
+# Only the static site needs uploading. The Go source, the commit queue
+# helpers and the docs tree are irrelevant to the deployment.
+cmd/
+internal/
+docs/
+profiles/
+.github/
+go.mod
+go.sum
+*.go
+.build-queue.sh
+.reslice-queue.sh
+site/build-docs.py
