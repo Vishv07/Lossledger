@@ -1,5 +1,7 @@
 # LossLedger
 
+[**lossledger-canary.vercel.app**](https://lossledger-canary.vercel.app) · [Methodology](https://lossledger-canary.vercel.app/methodology) · [Disclosure policy](https://lossledger-canary.vercel.app/disclosure)
+
 **Double-entry bookkeeping for logs.** Sent is one side of the ledger, arrived is the other, and the books must balance.
 
 LossLedger is a black-box, end-to-end delivery auditor for log pipelines. A tiny emitter writes sequence-numbered, signed canary lines through your real pipeline, in realistic shapes. A verifier then asks each store which sequence numbers it actually holds, and reports exact gap ranges, duplicates, ordering anomalies and delivery latency.
