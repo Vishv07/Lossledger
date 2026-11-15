@@ -152,6 +152,11 @@ section{padding:clamp(56px,8vw,104px) 0;border-top:1px solid var(--rule)}
 .ev-txt{color:var(--ink-2);font-size:.95rem}
 .ev-fig{font-family:var(--mono);font-size:.82rem;color:var(--red);white-space:nowrap}
 
+.note-wide{border:1px solid var(--rule-2);background:var(--panel);border-radius:9px;padding:20px 24px;margin-top:22px}
+.note-wide p{font-size:.96rem;color:var(--ink-2);max-width:78ch}
+.note-wide b{color:var(--ink);font-weight:600}
+.note-wide code{font-family:var(--mono);font-size:.86em;background:var(--paper-2);border:1px solid var(--rule);border-radius:4px;padding:1px 5px}
+
 /* taxonomy table */
 .tbl-wrap{overflow-x:auto;border:1px solid var(--rule);border-radius:9px;background:var(--panel)}
 table{width:100%;border-collapse:collapse;font-size:.93rem;min-width:620px}
@@ -448,8 +453,11 @@ footer{border-top:1px solid var(--rule);padding:46px 0 60px;background:var(--pap
           <span class="ev-fig">"not recovered"</span>
         </div>
       </div>
+      <div class="note-wide">
+        <p><b>The same blind spot is not specific to logs.</b> Prometheus answers a remote-write series carrying a duplicate label name with <code>204 No Content</code> and drops it, so the operator's own <code>samples_dropped_total</code> counter never moves. A component can only ever count the drops it notices, whatever it is carrying.</p>
+      </div>
       <p class="cap" style="text-align:left;margin-top:18px;max-width:72ch">
-        Four organisations independently built this harness internally: AWS runs release-blocking log-loss tests, Grafana built loki-canary, VictoriaMetrics built log-verifier, OpenTelemetry has an open request for it. None of them ships a generic, multi-collector, real-store version, because a neutral cross-vendor auditor belongs to nobody's roadmap.
+        Five organisations independently built this harness internally: AWS runs release-blocking log-loss tests, Grafana built loki-canary, VictoriaMetrics built log-verifier, LinkedIn built Xinfra Monitor for Kafka, and OpenTelemetry has an open request for it. None of them ships a generic, multi-collector, real-store version, because a neutral cross-vendor auditor belongs to nobody's roadmap.
       </p>
     </div>
   </section>

@@ -31,7 +31,9 @@ Documented cases:
 - **Elastic Discuss, "Losing logs in ELK"**: logs lost "often and sometimes in a massive way" while Logstash in, filtered and out stats were "almost the same". The counters lied.
 - **UK Ministry of Justice Cloud Platform** (2024-07-25): the log store stopped receiving, a human noticed via Slack about 40 minutes later, and the runbook closes with "These logs have not been recovered."
 
-Four organisations independently built this harness internally (AWS, Grafana, VictoriaMetrics, OpenTelemetry). None of them ships a generic, multi-collector, real-store version, because a neutral cross-vendor auditor belongs to nobody's roadmap.
+Five organisations independently built this harness internally: AWS runs release-blocking log-loss tests, Grafana built loki-canary, VictoriaMetrics built log-verifier, LinkedIn built Xinfra Monitor for Kafka, and OpenTelemetry has an open request for it. None of them ships a generic, multi-collector, real-store version, because a neutral cross-vendor auditor belongs to nobody's roadmap.
+
+The same blind spot shows up outside logs. Prometheus answers a remote-write series carrying a duplicate label name with `204 No Content` and drops it silently, so the operator's own `samples_dropped_total` counter never moves. Where else this engine fits, and where it does not, is recorded in [docs/extensions.md](docs/extensions.md).
 
 ## Status
 
