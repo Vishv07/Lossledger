@@ -128,7 +128,7 @@ placeholder still in them.
 > load-bearing, platform teams, and people mid-incident. Logs only, Linux only,
 > and it proves loss rather than repairing it.
 >
-> Live demo: https://lossledger-canary.vercel.app
+> Live demo: https://getlossledger.vercel.app
 > Code: https://github.com/Vishv07/Lossledger
 
 Expect the top comment to be "how do you know your harness is not the thing that

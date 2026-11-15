@@ -2,12 +2,12 @@
 
 **Double-entry bookkeeping for logs.** Sent is one side of the ledger, arrived is the other, and the books must balance.
 
-[![LossLedger](docs/assets/hero.png)](https://lossledger-canary.vercel.app)
+[![LossLedger](docs/assets/hero.png)](https://getlossledger.vercel.app)
 
 <p align="center">
-  <a href="https://lossledger-canary.vercel.app"><b>Live demo</b></a> ·
-  <a href="https://lossledger-canary.vercel.app/methodology">Methodology</a> ·
-  <a href="https://lossledger-canary.vercel.app/disclosure">Disclosure policy</a> ·
+  <a href="https://getlossledger.vercel.app"><b>Live demo</b></a> ·
+  <a href="https://getlossledger.vercel.app/methodology">Methodology</a> ·
+  <a href="https://getlossledger.vercel.app/disclosure">Disclosure policy</a> ·
   <a href="docs/launch-plan.md">Launch plan</a>
 </p>
 
