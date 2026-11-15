@@ -254,7 +254,7 @@ footer{border-top:1px solid var(--rule);padding:46px 0 60px;background:var(--pap
   <div class="hero">
     <div class="wrap hero-grid">
       <div>
-        <span class="tag"><span class="dot"></span>M1 complete · pre-release</span>
+        <span class="tag"><span class="dot"></span>pre-release</span>
         <h1>Your log pipeline says nothing was lost.</h1>
         <p class="lede">
           It would say that either way. Per-component counters can only count the drops a component <b>notices</b>, and the expensive losses are the ones nothing notices.
@@ -417,7 +417,7 @@ footer{border-top:1px solid var(--rule);padding:46px 0 60px;background:var(--pap
           <text class="d-sm" x="66" y="296">the emitter only writes, it never reads a verdict</text>
         </svg>
         <figcaption>
-          Red dots mark the four structurally invisible loss classes. The verifier never reads collector internals and never consumes a collector's own counters as verdict input: those counters are the thing being audited.
+          The three stores are the v1 target set; the adapters for them are still in progress. Red dots mark the four structurally invisible loss classes. The verifier never reads collector internals and never consumes a collector's own counters as verdict input: those counters are the thing being audited.
         </figcaption>
       </figure>
     </div>
@@ -691,36 +691,9 @@ export <span class="p">LOSSLEDGER_HMAC_KEY</span>=<span class="s">"any-shared-se
   <section id="status">
     <div class="wrap">
       <div class="shead">
-        <p class="kicker">honest status</p>
-        <h2>M1 complete. Not yet usable against a real store.</h2>
-        <p>The core is built and proves itself against reference pipelines. The real store adapters are not written yet.</p>
-      </div>
-      <div class="status">
-        <div class="st done">
-          <h3>Working today</h3>
-          <ul>
-            <li>LL1 wire format with HMAC signing and forward-compatible parsing</li>
-            <li>Emitter with plain, JSON, stack-trace, oversize and interleave shapes</li>
-            <li>Self-rotating file output, stdout output, and the safety rails</li>
-            <li>Epoch handling that tells a clean shutdown from a crash</li>
-            <li>Roaring-bitmap ledgers, adaptive settle window, mandatory re-check</li>
-            <li>The full anomaly taxonomy and the bisecting verifier</li>
-            <li>Prometheus metrics, text and JSON gap reports</li>
-            <li>The filesink reference adapter and the self-validation gate</li>
-          </ul>
-        </div>
-        <div class="st todo">
-          <h3>Not built yet</h3>
-          <ul>
-            <li>Elasticsearch and OpenSearch adapter (M2)</li>
-            <li>ClickHouse adapter (M2)</li>
-            <li>Loki adapter (M4)</li>
-            <li>Collector testbed for Vector, Fluent Bit and OTel (M3)</li>
-            <li>The four fault injectors and gauntlet CI mode (M3)</li>
-            <li>The published cross-collector loss matrix (M4)</li>
-            <li>Kubernetes operator and Helm chart (post-v1)</li>
-          </ul>
-        </div>
+        <h2>Pre-release</h2>
+        <p>The engine is built and proves itself against the reference pipelines that ship with it. Today it audits a directory acting as a store. The adapters for Elasticsearch, ClickHouse and Loki are in progress, so it is not ready to point at your production pipeline yet.</p>
+        <p style="margin-top:14px"><a href="https://github.com/Vishv07/Lossledger">Follow the repository</a> for when that lands.</p>
       </div>
     </div>
   </section>
