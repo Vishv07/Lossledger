@@ -82,7 +82,7 @@ findings are about.
 
 ### Ongoing
 
-One finding or re-test post per month beats any launch spike. Re-test posts
+One finding or re-test post per month beats any launch spike. Adjacent domains that could carry a later post are in [extensions.md](extensions.md). Re-test posts
 after an upstream fix are mandatory under the disclosure policy, and they are
 the half of the loop that builds the alliance.
 
