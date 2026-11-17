@@ -48,7 +48,9 @@ What works today:
 - The `filesink` reference adapter and the self-validation gate
 - Prometheus metrics and text or JSON gap reports
 
-Not built yet: the Elasticsearch, ClickHouse and Loki adapters (M2), the collector testbed and fault injectors (M3), and the cross-collector loss matrix (M4).
+A ClickHouse adapter now ships, along with the shared conformance suite every adapter is held to. It passes that suite against a test double but **has not been run against a real ClickHouse server**, so do not publish a finding produced with it yet. See [docs/adapters.md](docs/adapters.md).
+
+Not built yet: the Elasticsearch and Loki adapters, the collector testbed, the remaining fault injectors, and the cross-collector loss matrix.
 
 ## Quick start
 
