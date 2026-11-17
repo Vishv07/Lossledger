@@ -89,6 +89,10 @@ type FileConfig struct {
 
 	// Keep is how many rotated generations to retain. Older ones are removed,
 	// which is what lets a long soak run inside a small volume.
+	//
+	// A negative value retains every generation. The reference pipelines use
+	// that: a harness which prunes its own source files would grade the
+	// verifier on evidence it had destroyed itself.
 	Keep int
 
 	// SyncEveryWrite calls fsync after each group. Slower, but it removes our
@@ -122,7 +126,7 @@ func NewFileWriter(cfg FileConfig) (*FileWriter, error) {
 	if cfg.Name == "" {
 		cfg.Name = "canary.log"
 	}
-	if cfg.Keep <= 0 {
+	if cfg.Keep == 0 {
 		cfg.Keep = 5
 	}
 
@@ -219,26 +223,46 @@ func (f *FileWriter) rotateLocked() error {
 		return err
 	}
 
-	for gen := f.cfg.Keep; gen >= 1; gen-- {
-		older, err := f.generationPath(gen + 1)
-		if err != nil {
-			return err
-		}
-		current, err := f.generationPath(gen)
-		if err != nil {
-			return err
-		}
-		if _, err := os.Stat(current); err != nil {
-			continue
-		}
-		if gen == f.cfg.Keep {
-			if err := os.Remove(current); err != nil && !os.IsNotExist(err) {
-				return fmt.Errorf("emit: removing %s: %w", current, err)
+	if f.cfg.Keep < 0 {
+		// Retain everything: shift the whole chain up by one.
+		for gen := f.highestGeneration(); gen >= 1; gen-- {
+			current, err := f.generationPath(gen)
+			if err != nil {
+				return err
 			}
-			continue
+			older, err := f.generationPath(gen + 1)
+			if err != nil {
+				return err
+			}
+			if _, err := os.Stat(current); err != nil {
+				continue
+			}
+			if err := os.Rename(current, older); err != nil {
+				return fmt.Errorf("emit: rotating %s to %s: %w", current, older, err)
+			}
 		}
-		if err := os.Rename(current, older); err != nil {
-			return fmt.Errorf("emit: rotating %s to %s: %w", current, older, err)
+	} else {
+		for gen := f.cfg.Keep; gen >= 1; gen-- {
+			older, err := f.generationPath(gen + 1)
+			if err != nil {
+				return err
+			}
+			current, err := f.generationPath(gen)
+			if err != nil {
+				return err
+			}
+			if _, err := os.Stat(current); err != nil {
+				continue
+			}
+			if gen == f.cfg.Keep {
+				if err := os.Remove(current); err != nil && !os.IsNotExist(err) {
+					return fmt.Errorf("emit: removing %s: %w", current, err)
+				}
+				continue
+			}
+			if err := os.Rename(current, older); err != nil {
+				return fmt.Errorf("emit: rotating %s to %s: %w", current, older, err)
+			}
 		}
 	}
 
@@ -258,6 +282,19 @@ func (f *FileWriter) rotateLocked() error {
 // the root so that a crafted Name cannot walk out through the suffix.
 func (f *FileWriter) generationPath(n int) (string, error) {
 	return f.cfg.Root.Path(fmt.Sprintf("%s.%d", f.cfg.Name, n))
+}
+
+// highestGeneration finds the oldest surviving rotation generation.
+func (f *FileWriter) highestGeneration() int {
+	for gen := 1; ; gen++ {
+		p, err := f.generationPath(gen)
+		if err != nil {
+			return gen - 1
+		}
+		if _, err := os.Stat(p); err != nil {
+			return gen - 1
+		}
+	}
 }
 
 func (f *FileWriter) Sync() error {
