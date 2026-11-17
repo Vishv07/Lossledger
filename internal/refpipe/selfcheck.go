@@ -1,6 +1,7 @@
 package refpipe
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/Vishv07/lossledger/internal/adapter"
 	"github.com/Vishv07/lossledger/internal/emit"
 	"github.com/Vishv07/lossledger/internal/verify"
+	"github.com/Vishv07/lossledger/internal/wire"
 )
 
 // Options configures a self-check run.
@@ -164,6 +166,27 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		emitted == uint64(opts.Seqs),
 		fmt.Sprintf("%d", opts.Seqs), fmt.Sprintf("%d", emitted))
 
+	// Before grading the verifier, confirm the source data it will be graded
+	// against actually survives on disk.
+	//
+	// This check exists because it caught a real failure: at 100,000 sequences
+	// the harness's own rotation was deleting generations faster than the
+	// reference collector read them, and the verifier was being blamed for
+	// 82,334 sequences the test had destroyed. A gate that cannot verify its
+	// own premise will eventually report a harness bug as a product bug, or
+	// hide a product bug behind a harness one.
+	onDisk, err := countSourceSequences(srcDir, opts.Key, "node-ref", epoch)
+	if err != nil {
+		return result, fmt.Errorf("refpipe: inspecting the source directory: %w", err)
+	}
+	result.add("every emitted sequence survives in the source directory",
+		onDisk == emitted,
+		fmt.Sprintf("%d on disk", emitted), fmt.Sprintf("%d on disk", onDisk))
+	if onDisk != emitted {
+		// Grading the verifier now would produce a meaningless verdict.
+		return result, nil
+	}
+
 	// The faithful collector must come back clean.
 	goodDir := filepath.Join(work, "refgood")
 	good := &Pipe{SrcDir: srcDir, DstDir: goodDir, Key: opts.Key, Sabotage: Good()}
@@ -265,6 +288,40 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	return result, nil
 }
 
+// countSourceSequences counts the distinct canary sequences present on disk.
+func countSourceSequences(dir string, key []byte, src, epoch string) (uint64, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, err
+	}
+	seen := make(map[uint64]bool)
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		f, err := os.Open(filepath.Join(dir, e.Name()))
+		if err != nil {
+			return 0, err
+		}
+		sc := bufio.NewScanner(f)
+		sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+		for sc.Scan() {
+			tok, err := wire.Extract(sc.Text())
+			if err != nil || tok.Kind != wire.KindCanary {
+				continue
+			}
+			if tok.Src == src && tok.Epoch == epoch && tok.Verify(key) {
+				seen[tok.Seq] = true
+			}
+		}
+		f.Close()
+		if err := sc.Err(); err != nil {
+			return 0, err
+		}
+	}
+	return uint64(len(seen)), nil
+}
+
 // emitEpoch writes one epoch into dir and returns its identifier and length.
 func emitEpoch(dir string, opts Options, clean bool) (string, uint64, error) {
 	opts.applyDefaults()
@@ -276,7 +333,10 @@ func emitEpoch(dir string, opts Options, clean bool) (string, uint64, error) {
 	// Rotate often, so the reference run exercises the rotation path rather
 	// than writing one tidy file nothing realistic would produce.
 	writer, err := emit.NewFileWriter(emit.FileConfig{
-		Root: root, Name: "canary.log", MaxLines: 500, Keep: 200,
+		// Keep every generation. A harness that prunes its own source files
+		// would grade the verifier on evidence it destroyed itself, and the
+		// verifier would be blamed for loss the test caused.
+		Root: root, Name: "canary.log", MaxLines: 500, Keep: -1,
 	})
 	if err != nil {
 		return "", 0, err

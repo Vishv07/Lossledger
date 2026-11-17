@@ -63,7 +63,7 @@ jobs:
           LOSSLEDGER_HMAC_KEY: ci-selfcheck-key
         run: |
           go build -o lossledger ./cmd/lossledger
-          ./lossledger selfcheck -seqs 20000
+          ./lossledger selfcheck -seqs 100000
 
       - name: gate across several seeds
         run: go test -count=1 -run TestSelfCheckAcrossSeeds ./internal/refpipe/
