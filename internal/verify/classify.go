@@ -8,6 +8,7 @@
 package verify
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -100,15 +101,51 @@ func (f Finding) String() string {
 	return s
 }
 
+// SinkTally is the accounting for one sink.
+//
+// Conservation holds at this level and not above it. A sequence is expected
+// once per sink, so summing expectations across sinks would report an emission
+// count several times larger than anything that was written.
+type SinkTally struct {
+	Sink     string
+	Expected uint64
+	Arrived  uint64
+	Missing  uint64
+	InFlight uint64
+}
+
+// Conservation checks PRD section 10.3 property 5 for this sink: every
+// expected sequence is either arrived, missing, or still in flight.
+func (t SinkTally) Conservation() error {
+	accounted := t.Arrived + t.Missing + t.InFlight
+	if accounted != t.Expected {
+		return fmt.Errorf("verify: conservation violated at sink %s: expected %d but arrived %d + missing %d + in flight %d = %d",
+			t.Sink, t.Expected, t.Arrived, t.Missing, t.InFlight, accounted)
+	}
+	return nil
+}
+
 // Verdict is the overall result of a verification pass.
 type Verdict struct {
 	Worst    Anomaly
 	Findings []Finding
 
-	Emitted  uint64
+	// Emitted is the number of distinct events written, counted once per
+	// (source, epoch) rather than once per sink. This is the number a reader
+	// means when they ask how many lines were produced.
+	Emitted uint64
+
+	// Arrived, MissingN and InFlight are sums across every sink, so with two
+	// sinks a single lost event counts twice. That is the right unit for a
+	// delivery total and the wrong one for an emission total, which is why
+	// Emitted is counted differently.
 	Arrived  uint64
 	MissingN uint64
 	InFlight uint64
+
+	// PerSink holds the accounting each sink is responsible for. Conservation
+	// is checked here.
+	PerSink []SinkTally
 
 	// FalseMissing counts sequences that were declared Missing and later
 	// arrived. It must be zero in every published run. If it is ever nonzero
@@ -122,16 +159,30 @@ type Verdict struct {
 // ExitCode returns the process exit status for this verdict.
 func (v Verdict) ExitCode() int { return v.Worst.Severity() }
 
-// Conservation checks the invariant from PRD section 10.3 property 5: every
-// emitted sequence is either arrived, missing, or still in flight. A violation
-// means the ledger has lost track of a sequence, which is a harness bug.
+// Conservation checks PRD section 10.3 property 5 at every sink: each expected
+// sequence is either arrived, missing, or still in flight. A violation means
+// the ledger has lost track of a sequence, which is a harness bug.
+//
+// It is deliberately checked per sink rather than over the totals. A global
+// check passes whenever the same error appears on both sides of the equation,
+// which is exactly what a per-sink miscount does, so it would report healthy
+// while the numbers were wrong.
 func (v Verdict) Conservation() error {
-	accounted := v.Arrived + v.MissingN + v.InFlight
-	if accounted != v.Emitted {
-		return fmt.Errorf("verify: conservation violated: emitted %d but arrived %d + missing %d + in flight %d = %d",
-			v.Emitted, v.Arrived, v.MissingN, v.InFlight, accounted)
+	if len(v.PerSink) == 0 {
+		if v.Emitted == 0 {
+			return nil // nothing was emitted, so there is nothing to account for
+		}
+		return fmt.Errorf("verify: conservation is unverifiable: %d events were emitted "+
+			"but no per-sink accounting was recorded", v.Emitted)
 	}
-	return nil
+
+	var failures []error
+	for _, t := range v.PerSink {
+		if err := t.Conservation(); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
 }
 
 // Config tunes the classifier.

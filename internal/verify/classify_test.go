@@ -328,10 +328,10 @@ func TestConservation(t *testing.T) {
 		v       Verdict
 		wantErr bool
 	}{
-		{"balanced", Verdict{Emitted: 100, Arrived: 90, MissingN: 5, InFlight: 5}, false},
-		{"all arrived", Verdict{Emitted: 100, Arrived: 100}, false},
-		{"short", Verdict{Emitted: 100, Arrived: 90, MissingN: 5, InFlight: 1}, true},
-		{"over", Verdict{Emitted: 100, Arrived: 90, MissingN: 50, InFlight: 5}, true},
+		{"balanced", Verdict{Emitted: 100, PerSink: []SinkTally{{Sink: "s", Expected: 100, Arrived: 90, Missing: 5, InFlight: 5}}}, false},
+		{"all arrived", Verdict{Emitted: 100, PerSink: []SinkTally{{Sink: "s", Expected: 100, Arrived: 100}}}, false},
+		{"short", Verdict{Emitted: 100, PerSink: []SinkTally{{Sink: "s", Expected: 100, Arrived: 90, Missing: 5, InFlight: 1}}}, true},
+		{"over", Verdict{Emitted: 100, PerSink: []SinkTally{{Sink: "s", Expected: 100, Arrived: 90, Missing: 50, InFlight: 5}}}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -434,9 +434,28 @@ func (v *Verifier) Verdict() Verdict {
 
 	out := Verdict{Worst: Clean, InvalidLines: invalid}
 
+	// Emission is a property of a source and an epoch, not of a sink. Counting
+	// it per stream would multiply it by the number of sinks and report an
+	// emission total larger than anything that was ever written.
+	emittedPerEpoch := map[string]uint64{}
+	tallies := map[string]*SinkTally{}
+
 	for _, s := range streams {
 		obs, falseMissing, expected := s.observation(v.cfg.Classify)
 		findings := Classify(obs, v.cfg.Classify)
+
+		epochKey := s.key.src + "|" + s.key.epoch
+		if expected > emittedPerEpoch[epochKey] {
+			emittedPerEpoch[epochKey] = expected
+		}
+		tally := tallies[s.key.sink]
+		if tally == nil {
+			tally = &SinkTally{Sink: s.key.sink}
+			tallies[s.key.sink] = tally
+		}
+		tally.Expected += expected
+		tally.Arrived += obs.Arrived.Count()
+		tally.InFlight += s.scheduler.InFlightCount()
 
 		// A missing verdict is also a declaration: if any of these sequences
 		// later arrive, that is an integrity failure and must be counted.
@@ -452,13 +471,25 @@ func (v *Verifier) Verdict() Verdict {
 			}
 			s.scheduler.Declare(seqs)
 			out.MissingN += f.Count
+			tally.Missing += f.Count
 		}
 
 		out.Findings = append(out.Findings, findings...)
-		out.Emitted += expected
 		out.Arrived += obs.Arrived.Count()
 		out.InFlight += s.scheduler.InFlightCount()
 		out.FalseMissing += falseMissing
+	}
+
+	for _, n := range emittedPerEpoch {
+		out.Emitted += n
+	}
+	sinkNames := make([]string, 0, len(tallies))
+	for name := range tallies {
+		sinkNames = append(sinkNames, name)
+	}
+	sort.Strings(sinkNames)
+	for _, name := range sinkNames {
+		out.PerSink = append(out.PerSink, *tallies[name])
 	}
 
 	out.Worst = Worst(out.Findings)
