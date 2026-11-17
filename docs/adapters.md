@@ -1,0 +1,188 @@
+# Writing a sink adapter
+
+An adapter is the only part of LossLedger that knows how to ask a particular
+store what it holds. Everything else works in sequence numbers.
+
+A verdict is only as trustworthy as the adapter that produced it. An adapter
+that miscounts a range turns this project into a machine for libelling
+collectors, so the behaviour is pinned once in a shared suite and every adapter
+is run against it.
+
+Aim for 150 to 250 lines. Much more usually means store-specific knowledge has
+leaked in that belongs in this document instead.
+
+---
+
+## The interface
+
+```go
+type Sink interface {
+    Name() string
+    CountRange(ctx, src, epoch string, from, to uint64) (distinct, total uint64, err error)
+    FetchRange(ctx, src, epoch string, from, to uint64) (SeqIter, error)
+    SettleHint() time.Duration
+    Doctor(ctx) error
+    Close() error
+}
+```
+
+There is no write method, and there will not be one. The verifier is read-only
+against your stores by construction rather than by discipline.
+
+### What each method has to get right
+
+**CountRange** is the cheap path. The verifier calls it over wide ranges and
+only looks closer when the answer disagrees, so the entire cost model rests on
+it being cheap.
+
+- `distinct` counts distinct sequences. `total` counts rows. They differ by
+  exactly the duplicate rows.
+- Collapsing them hides every duplicate bug. Inflating `distinct` by duplicates
+  invents loss somewhere else.
+- **Use an exact aggregate.** An approximate distinct count makes a complete
+  range occasionally look short, and the verifier then reports a gap that does
+  not exist.
+- Bounds are **inclusive at both ends**. An exclusive upper bound loses one
+  sequence per range, and bisection multiplies that into phantom gaps at every
+  level of recursion.
+
+**FetchRange** is called only on ranges that already disagreed. Return entries
+in ascending sequence order, each with a duplicate count of at least one.
+
+**SettleHint** is your store's own consistency floor: an index refresh
+interval, an async insert flush, an ingester flush. **Be honest and generous.**
+Reporting a shorter delay than the store really needs is how the harness
+accuses a store of losing a row it had not finished writing.
+
+**Doctor** must verify the canary fields are *queryable*, not merely that the
+connection works. A store that answers queries but cannot see the token fields
+reports every sequence as absent, which is a total-loss verdict against a
+pipeline that is working perfectly.
+
+### An optional capability
+
+```go
+type PartialReporter interface {
+    PartialSeqs(ctx, src, epoch string, from, to uint64) ([]uint64, error)
+}
+```
+
+A multi-line event whose continuation lines were partly lost is invisible to
+`CountRange`: the parent sequence arrived exactly once, so the cheap path sees
+a clean range and never looks closer.
+
+Implement this if your store can answer the question cheaply. If it cannot, do
+not implement it, and reports will say partial detection was unavailable rather
+than quietly claiming none were found.
+
+---
+
+## The conformance suite
+
+```go
+func TestMyAdapterConformance(t *testing.T) {
+    adapter.Conformance{
+        Sink: sink,
+        Seed: func(ctx context.Context, src, epoch string, seqs []uint64, dups map[uint64]int) error {
+            // Write these rows into the store, synchronously.
+            return nil
+        },
+    }.Run(t)
+}
+```
+
+It checks ten things: doctor, settle hint, an empty store, exact counting, gap
+visibility, duplicates kept separate from distinct, fetch ordering, inclusive
+bounds, an unknown stream returning zero rather than an error, and context
+cancellation.
+
+The suite tests itself. `conformance_test.go` runs deliberately broken adapters
+through it and fails if they pass, so a suite that has stopped checking anything
+is caught rather than trusted.
+
+---
+
+## ClickHouse
+
+Shipped as `adapter.NewClickHouse`. It speaks the **HTTP interface** rather
+than the native protocol, which keeps the project free of a database driver
+dependency.
+
+### Table
+
+```sql
+CREATE TABLE IF NOT EXISTS lossledger_canary (
+  src        LowCardinality(String),
+  ep         String,
+  seq        UInt64,
+  ts         DateTime64(9),
+  shape      LowCardinality(String),
+  kind       LowCardinality(String),
+  cont_index UInt32 DEFAULT 0,
+  cont_total UInt32 DEFAULT 0,
+  ingest_ts  DateTime64(3) DEFAULT now64(3)
+) ENGINE = MergeTree
+ORDER BY (src, ep, seq);
+```
+
+`kind` is `canary`, `continuation` or `final`. `ingest_ts` defaults to the
+server clock, which is what the latency histogram and the ordering check read.
+
+The adapter also exposes `Schema()`, returning this statement with your
+configured database and table name filled in, so the shipped schema and the
+queries cannot drift apart.
+
+### Queries it issues
+
+| Method | Statement |
+|---|---|
+| CountRange | `SELECT uniqExact(seq), count() ... WHERE kind = 'canary' AND seq >= ? AND seq <= ?` |
+| FetchRange | `SELECT seq, toUnixTimestamp64Milli(max(ingest_ts)), count() ... GROUP BY seq ORDER BY seq` |
+| PartialSeqs | `... WHERE kind = 'continuation' GROUP BY seq HAVING count() < max(cont_total)` |
+| EpochState | `SELECT countIf(kind = 'final'), ...` |
+| Doctor | `SELECT 1`, then every canary column with `WHERE 1 = 0` |
+
+`uniqExact` is deliberate. `uniq` is approximate above a threshold and would
+make a complete range occasionally look short.
+
+### Parameters, not interpolation
+
+Values travel as `param_<name>` and are referenced as `{name:String}`, which is
+ClickHouse's server-side binding. Source and epoch identifiers come from data
+the pipeline carried, so a value that reached the SQL text could rewrite the
+query.
+
+Table and database names cannot be bound, so they are validated as plain
+identifiers at construction and rejected otherwise.
+
+### Configuration
+
+```go
+sink, err := adapter.NewClickHouse(adapter.ClickHouseConfig{
+    Addr:     "http://localhost:8123",
+    Database: "observability",
+    Table:    "lossledger_canary",
+    Settle:   5 * time.Second,
+})
+```
+
+`Settle` defaults to 5 seconds. ClickHouse async inserts flush on a timer
+(`async_insert_busy_timeout_ms`, one second by default) and a distributed table
+adds more, so raise it rather than lower it if you are unsure.
+
+### What has been verified, and what has not
+
+**Verified.** The adapter passes the full conformance suite against an
+in-memory server that implements the same statements with the same semantics:
+inclusive bounds, `uniqExact` counting distinct while `count()` counts rows,
+and the grouped `HAVING` over continuation rows. Parameter binding, identifier
+validation, error propagation, partial detection, epoch state and context
+cancellation are all covered.
+
+**Not verified.** It has **not been run against a real ClickHouse server**. The
+test double proves the adapter builds correct SQL and parses the response
+format. It cannot prove that ClickHouse answers these statements the way the
+double does.
+
+Until the compose testbed exists, treat this adapter as untested against the
+real thing, and do not publish a finding produced with it.
