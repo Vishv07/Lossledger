@@ -67,9 +67,24 @@ func (r GapReport) WriteText(w io.Writer) error {
 	fmt.Fprintf(&b, "Invalid lines  : %d\n", r.Verdict.InvalidLines)
 
 	if err := r.Verdict.Conservation(); err != nil {
-		fmt.Fprintf(&b, "Conservation   : FAILED, %s\n", err)
+		fmt.Fprintf(&b, "Conservation   : FAILED\n")
+		for _, line := range strings.Split(err.Error(), "\n") {
+			fmt.Fprintf(&b, "                 %s\n", line)
+		}
 	} else {
-		b.WriteString("Conservation   : holds (emitted = arrived + missing + in flight)\n")
+		b.WriteString("Conservation   : holds at every sink\n")
+	}
+
+	// Per-sink books, because conservation holds at this level and a reader
+	// comparing one sink against another is how source-side loss is told apart
+	// from a single sink's path.
+	if len(r.Verdict.PerSink) > 0 {
+		b.WriteString("\nPer sink\n--------\n")
+		fmt.Fprintf(&b, "%-20s %10s %10s %10s %10s\n", "sink", "expected", "arrived", "missing", "in flight")
+		for _, t := range r.Verdict.PerSink {
+			fmt.Fprintf(&b, "%-20s %10d %10d %10d %10d\n",
+				t.Sink, t.Expected, t.Arrived, t.Missing, t.InFlight)
+		}
 	}
 
 	if len(r.Verdict.Findings) == 0 {
@@ -117,6 +132,14 @@ type jsonFinding struct {
 	Heuristic bool     `json:"heuristic,omitempty"`
 }
 
+type jsonSink struct {
+	Sink     string `json:"sink"`
+	Expected uint64 `json:"expected"`
+	Arrived  uint64 `json:"arrived"`
+	Missing  uint64 `json:"missing"`
+	InFlight uint64 `json:"in_flight"`
+}
+
 type jsonReport struct {
 	Verdict      string        `json:"verdict"`
 	ExitCode     int           `json:"exit_code"`
@@ -128,6 +151,7 @@ type jsonReport struct {
 	InvalidLines uint64        `json:"invalid_lines"`
 	SettleWindow string        `json:"settle_window"`
 	Sinks        []string      `json:"sinks,omitempty"`
+	PerSink      []jsonSink    `json:"per_sink,omitempty"`
 	Findings     []jsonFinding `json:"findings"`
 	Limitations  []string      `json:"limitations,omitempty"`
 	Conservation string        `json:"conservation"`
@@ -151,6 +175,13 @@ func (r GapReport) WriteJSON(w io.Writer) error {
 	}
 	if err := r.Verdict.Conservation(); err != nil {
 		out.Conservation = err.Error()
+	}
+
+	for _, t := range r.Verdict.PerSink {
+		out.PerSink = append(out.PerSink, jsonSink{
+			Sink: t.Sink, Expected: t.Expected, Arrived: t.Arrived,
+			Missing: t.Missing, InFlight: t.InFlight,
+		})
 	}
 
 	for _, f := range r.Verdict.Findings {
