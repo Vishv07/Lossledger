@@ -1,0 +1,60 @@
+# Vector tailing files into ClickHouse.
+#
+# This is the pipeline under test, and nothing in it is configured to help the
+# harness. Vector reads a directory the emitter writes into, exactly as it
+# would read an application's logs, and writes rows the verifier later queries.
+# The canary is just another log line on the way through.
+#
+# Project names are prefixed ll-gauntlet- so the sweeper can find and remove
+# anything a crashed run left behind, and never touches a compose project it
+# did not create (PRD section 8.5).
+
+name: ll-gauntlet-vector-clickhouse
+
+services:
+  clickhouse:
+    image: ${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:24.8-alpine}
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: lossledger
+      CLICKHOUSE_PASSWORD: lossledger
+      # Without this the user is created without the rights to create the
+      # canary table, and the run fails well after it looked healthy.
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "${CLICKHOUSE_HTTP_PORT:-18123}:8123"
+    volumes:
+      - ./clickhouse-init.sql:/docker-entrypoint-initdb.d/10-canary.sql:ro
+    healthcheck:
+      # Checking that the canary table answers, not merely that the server is
+      # up. A server that is reachable but has no table would report every
+      # sequence as missing, which is a total-loss verdict against a pipeline
+      # that is working.
+      test: ["CMD-SHELL", "clickhouse-client --user lossledger --password lossledger --query 'SELECT count() FROM lossledger_canary' || exit 1"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  vector:
+    image: ${VECTOR_IMAGE:-timberio/vector:0.41.1-alpine}
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    volumes:
+      - ./vector.toml:/etc/vector/vector.toml:ro
+      - ${CANARY_DIR:?CANARY_DIR must point at the directory the emitter writes into}:/var/log/canary:ro
+      - vector-data:/var/lib/vector
+    command: ["--config", "/etc/vector/vector.toml"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:8686/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+volumes:
+  # Named so Vector's checkpoint survives a container restart, which is what
+  # makes the sigkill injector produce replay duplicates rather than a clean
+  # restart from zero.
+  vector-data:

@@ -1,0 +1,11 @@
+# Exact images every scenario runs against.
+#
+# A finding names the version it was measured on, so these are pinned by
+# digest-bearing tag rather than by "latest". A matrix cell whose software
+# changed underneath it is not reproducible, and a finding that cannot be
+# reproduced is not a finding.
+#
+# Update deliberately, in its own commit, and re-run the affected cells.
+
+CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:24.8-alpine
+VECTOR_IMAGE=timberio/vector:0.41.1-alpine

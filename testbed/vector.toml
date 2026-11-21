@@ -1,0 +1,130 @@
+# Vector configuration for the testbed.
+#
+# Deliberately close to a default deployment. The point of a matrix cell is to
+# measure what a collector does as people actually run it, so the only settings
+# here are the ones required to reach the directory and the store. Anything
+# tuned away from its default is named in the scenario and reported beside the
+# result, never applied quietly.
+
+data_dir = "/var/lib/vector"
+
+[api]
+enabled = true
+address = "0.0.0.0:8686"
+
+# ---------------------------------------------------------------------------
+# Source: the emitter's own files, read the way application logs are read.
+# ---------------------------------------------------------------------------
+[sources.canary]
+type = "file"
+include = ["/var/log/canary/*.log", "/var/log/canary/*.log.*"]
+read_from = "beginning"
+
+# glob_minimum_cooldown_ms is Vector's file discovery interval and its default
+# is 60000. That default is the subject of the first intended finding: a file
+# that lives for less time than the cooldown can be gone before Vector ever
+# looks at it, and nothing counts the lines inside it.
+#
+# Left at the default here on purpose. The rotation storm scenario overrides it
+# to show the tuned result beside the default one.
+glob_minimum_cooldown_ms = 60000
+
+# ---------------------------------------------------------------------------
+# Transform: pull the LL1 token out of whatever shape wrapped it.
+#
+# This is the one place the testbed knows about the canary format. It is a
+# parser, not a privilege: it reads the line Vector already delivered and does
+# not reach back into the source.
+# ---------------------------------------------------------------------------
+[transforms.parse]
+type = "remap"
+inputs = ["canary"]
+drop_on_error = false
+source = '''
+# A line may be bare, wrapped in JSON, or sitting mid stack trace. Find the
+# token wherever it is rather than assuming a shape.
+line = string!(.message)
+
+canary = parse_regex(line, r'LL1\|src=(?P<src>[^|]+)\|ep=(?P<ep>[^|]+)\|seq=(?P<seq>\d+)\|ts=(?P<ts>\d+)\|shape=(?P<shape>[^|]+)\|hmac=(?P<hmac>[0-9a-f]{12})') ?? null
+
+if canary != null {
+  .kind = "canary"
+  .src = canary.src
+  .ep = canary.ep
+  .seq = to_int!(canary.seq)
+  .ts = to_int!(canary.ts)
+  .shape = canary.shape
+  .cont_index = 0
+  .cont_total = 0
+} else {
+  cont = parse_regex(line, r'LLC\|src=(?P<src>[^|]+)\|ep=(?P<ep>[^|]+)\|seq=(?P<seq>\d+)\|n=(?P<n>\d+)(\|of=(?P<of>\d+))?') ?? null
+  if cont != null {
+    .kind = "continuation"
+    .src = cont.src
+    .ep = cont.ep
+    .seq = to_int!(cont.seq)
+    .ts = 0
+    .shape = "continuation"
+    .cont_index = to_int!(cont.n)
+    .cont_total = to_int(cont.of) ?? 0
+  } else {
+    final = parse_regex(line, r'LLF\|src=(?P<src>[^|]+)\|ep=(?P<ep>[^|]+)\|ts=(?P<ts>\d+)\|final=(?P<final>\d+)') ?? null
+    if final != null {
+      .kind = "final"
+      .src = final.src
+      .ep = final.ep
+      .seq = 0
+      .ts = to_int!(final.ts)
+      .shape = "final"
+      .cont_index = 0
+      # The final line's sequence travels in cont_total, which is how the
+      # adapter reads it back.
+      .cont_total = to_int!(final.final)
+    } else {
+      # Not one of ours. The interleave profile's neighbour lines land here by
+      # design, and so would any real application log sharing the directory.
+      .kind = "other"
+    }
+  }
+}
+'''
+
+# Lines carrying no token are dropped before the sink rather than written as
+# rows the adapter would have to filter out on every query.
+[transforms.canary_only]
+type = "filter"
+inputs = ["parse"]
+condition = '.kind != "other"'
+
+# ---------------------------------------------------------------------------
+# Sink: ClickHouse.
+# ---------------------------------------------------------------------------
+[sinks.clickhouse]
+type = "clickhouse"
+inputs = ["canary_only"]
+endpoint = "http://clickhouse:8123"
+database = "default"
+table = "lossledger_canary"
+auth.strategy = "basic"
+auth.user = "lossledger"
+auth.password = "lossledger"
+skip_unknown_fields = true
+
+[sinks.clickhouse.encoding]
+only_fields = ["src", "ep", "seq", "ts", "shape", "kind", "cont_index", "cont_total"]
+timestamp_format = "unix"
+
+[sinks.clickhouse.batch]
+# Small batches keep the settle window short enough that a scenario finishes in
+# minutes. A production deployment would batch far more aggressively, and the
+# adapter's settle hint is what absorbs that difference.
+max_events = 1000
+timeout_secs = 2
+
+[sinks.clickhouse.buffer]
+type = "memory"
+max_events = 10000
+# Block rather than drop. A sink that silently drops on overflow would make
+# Vector the source of loss the harness then attributes to the pipeline, which
+# is exactly the confusion the testbed exists to avoid.
+when_full = "block"
