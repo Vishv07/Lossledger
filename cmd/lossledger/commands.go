@@ -51,10 +51,67 @@ func requireKey() ([]byte, error) {
 	return key, nil
 }
 
+// sinkFlags are the store endpoints a command can be pointed at.
+//
+// A command that can only reach the reference adapter cannot audit anything
+// real, so these are shared rather than redeclared per command.
+type sinkFlags struct {
+	fileDir  string
+	chAddr   string
+	chDB     string
+	chTable  string
+	chUser   string
+	chPass   string
+	chSettle time.Duration
+}
+
+func (f *sinkFlags) register(fs *flag.FlagSet) {
+	fs.StringVar(&f.fileDir, "filesink", "", "directory to query as a reference sink")
+	fs.StringVar(&f.chAddr, "clickhouse", "", "ClickHouse HTTP endpoint, for example http://localhost:8123")
+	fs.StringVar(&f.chDB, "clickhouse-db", "", "ClickHouse database")
+	fs.StringVar(&f.chTable, "clickhouse-table", "lossledger_canary", "ClickHouse canary table")
+	fs.StringVar(&f.chUser, "clickhouse-user", "", "ClickHouse user")
+	fs.StringVar(&f.chPass, "clickhouse-password", "", "ClickHouse password")
+	fs.DurationVar(&f.chSettle, "clickhouse-settle", 5*time.Second, "ClickHouse consistency floor")
+}
+
+// build assembles the registry. It returns the file sink separately because
+// the standalone verify path needs it to discover which streams exist.
+func (f *sinkFlags) build(key []byte) (*adapter.Registry, *adapter.FileSink, error) {
+	var sinks []adapter.Sink
+	var fileSink *adapter.FileSink
+
+	if f.fileDir != "" {
+		fs, err := adapter.NewFileSink("filesink", f.fileDir, key)
+		if err != nil {
+			return nil, nil, err
+		}
+		fileSink = fs
+		sinks = append(sinks, fs)
+	}
+	if f.chAddr != "" {
+		ch, err := adapter.NewClickHouse(adapter.ClickHouseConfig{
+			Addr: f.chAddr, Database: f.chDB, Table: f.chTable,
+			User: f.chUser, Password: f.chPass, Settle: f.chSettle,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		sinks = append(sinks, ch)
+	}
+	if len(sinks) == 0 {
+		return nil, nil, fmt.Errorf("no sink given: pass -filesink, -clickhouse, or both")
+	}
+
+	reg, err := adapter.NewRegistry(sinks...)
+	return reg, fileSink, err
+}
+
 // runDoctor checks the environment and every configured sink.
 func runDoctor(ctx context.Context, args []string) (int, error) {
 	fs := flag.NewFlagSet("doctor", flag.ExitOnError)
-	sinkDir := fs.String("filesink", "", "directory to check as a reference sink")
+	var sf sinkFlags
+	sf.register(fs)
 	if err := fs.Parse(args); err != nil {
 		return verify.ExitHarnessError, err
 	}
@@ -86,16 +143,20 @@ func runDoctor(ctx context.Context, args []string) (int, error) {
 		ok("signing key", wire.KeyEnvVar+" is set")
 	}
 
-	if *sinkDir != "" {
+	if sf.fileDir != "" || sf.chAddr != "" {
 		key, err := requireKey()
 		if err != nil {
-			bad("filesink", err.Error())
-		} else if sink, err := adapter.NewFileSink("filesink", *sinkDir, key); err != nil {
-			bad("filesink", err.Error())
-		} else if err := sink.Doctor(ctx); err != nil {
-			bad("filesink", err.Error())
+			bad("sinks", err.Error())
+		} else if reg, _, err := sf.build(key); err != nil {
+			bad("sinks", err.Error())
 		} else {
-			ok("filesink", *sinkDir)
+			for _, sink := range reg.All() {
+				if err := sink.Doctor(ctx); err != nil {
+					bad("sink "+sink.Name(), err.Error())
+				} else {
+					ok("sink "+sink.Name(), fmt.Sprintf("settle floor %s", sink.SettleHint()))
+				}
+			}
 		}
 	}
 
@@ -185,100 +246,159 @@ func runEmit(ctx context.Context, args []string) error {
 	return nil
 }
 
-// verifyFlags are shared by verify and run.
-type verifyFlags struct {
-	dir      string
-	src      string
-	epoch    string
-	maxWait  time.Duration
-	interval time.Duration
-	asJSON   bool
-}
-
-func (f *verifyFlags) register(fs *flag.FlagSet) {
-	fs.StringVar(&f.dir, "filesink", "", "directory to query as a reference sink (required)")
-	fs.StringVar(&f.src, "src", "", "source identifier to verify, empty for every source found")
-	fs.StringVar(&f.epoch, "epoch", "", "epoch to verify, empty for every epoch found")
-	fs.DurationVar(&f.maxWait, "max-wait", verify.DefaultMaxWait, "ceiling on the settle window")
-	fs.DurationVar(&f.interval, "interval", time.Minute, "sweep interval")
-	fs.BoolVar(&f.asJSON, "json", false, "emit the report as JSON")
-}
-
-// runVerify reconciles a directory sink against the sequences it should hold.
 func runVerify(ctx context.Context, args []string) (int, error) {
 	fs := flag.NewFlagSet("verify", flag.ExitOnError)
-	var vf verifyFlags
-	vf.register(fs)
+	var sf sinkFlags
+	sf.register(fs)
+	src := fs.String("src", "", "source identifier to verify")
+	epoch := fs.String("epoch", "", "epoch to verify")
+	maxWait := fs.Duration("max-wait", verify.DefaultMaxWait, "ceiling on the settle window")
+	statePath := fs.String("state", "", "file to persist verifier state in, so a restart does not fabricate gaps")
+	asJSON := fs.Bool("json", false, "emit the report as JSON")
 	if err := fs.Parse(args); err != nil {
 		return verify.ExitHarnessError, err
-	}
-	if vf.dir == "" {
-		return verify.ExitHarnessError, fmt.Errorf("verify needs -filesink")
 	}
 
 	key, err := requireKey()
 	if err != nil {
 		return verify.ExitHarnessError, err
 	}
-	sink, err := adapter.NewFileSink("filesink", vf.dir, key)
+	registry, fileSink, err := sf.build(key)
 	if err != nil {
 		return verify.ExitHarnessError, err
 	}
-	if err := sink.Doctor(ctx); err != nil {
+	defer registry.Close()
+
+	if err := registry.Doctor(ctx); err != nil {
 		return verify.ExitHarnessError, err
 	}
-	registry, err := adapter.NewRegistry(sink)
+
+	v, err := verify.NewVerifier(verify.VerifierConfig{MaxWait: *maxWait}, registry)
 	if err != nil {
 		return verify.ExitHarnessError, err
 	}
 
-	v, err := verify.NewVerifier(verify.VerifierConfig{
-		Interval: vf.interval,
-		MaxWait:  vf.maxWait,
-	}, registry)
-	if err != nil {
-		return verify.ExitHarnessError, err
+	// Resume from the last run if a state file was given. Without this a
+	// restart re-derives from nothing and anything past its settle window
+	// looks absent, which is loss the harness caused itself.
+	var store verify.Store
+	if *statePath != "" {
+		store, err = verify.NewFileStore(*statePath)
+		if err != nil {
+			return verify.ExitHarnessError, err
+		}
+		if err := v.LoadState(store); err != nil && err != verify.ErrNoState {
+			fmt.Fprintf(os.Stderr, "lossledger: could not resume state, re-deriving: %v\n", err)
+		}
 	}
 
-	// The sink tells us which streams it holds and where each epoch ended.
-	streams := sink.Streams()
+	// Work out which streams to verify. The reference adapter can enumerate
+	// them; a real store needs to be told, because asking it to list every
+	// source it has ever seen is not a cheap query.
+	type stream struct{ src, epoch string }
+	var streams []stream
+
+	switch {
+	case *src != "" && *epoch != "":
+		streams = append(streams, stream{*src, *epoch})
+	case fileSink != nil:
+		for _, s := range fileSink.Streams() {
+			streams = append(streams, stream{s[0], s[1]})
+		}
+	default:
+		return verify.ExitHarnessError, fmt.Errorf(
+			"give -src and -epoch, or point -filesink at the emitter's directory so the streams can be discovered")
+	}
 	if len(streams) == 0 {
-		return verify.ExitHarnessError, fmt.Errorf("no canary streams found in %s", vf.dir)
+		return verify.ExitHarnessError, fmt.Errorf("no canary streams found")
 	}
 
-	now := time.Now()
-	for _, s := range streams {
-		src, epoch := s[0], s[1]
-		if vf.src != "" && src != vf.src {
+	// The settle window and the mandatory re-check are measured against a
+	// clock. Sweeping twice in the same millisecond means the re-check delay
+	// never elapses, nothing is ever confirmed absent, and the command can
+	// never report MISSING however much is gone. So the clock is driven
+	// forward explicitly between sweeps.
+	//
+	// This is sound here because the emission times are already synthetic:
+	// a store cannot tell us when a line was written, so verify treats every
+	// sequence as emitted long enough ago to judge.
+	clock := time.Now().Add(-4 * *maxWait)
+	v.SetClock(func() time.Time { return clock })
+
+	now := clock
+	for _, st := range streams {
+		upTo, hasFinal := epochExtent(ctx, registry, fileSink, st.src, st.epoch)
+		if upTo == 0 {
 			continue
 		}
-		if vf.epoch != "" && epoch != vf.epoch {
-			continue
-		}
-		state := sink.EpochState(src, epoch)
-		upTo := state.MaxSeq
-		if state.HasFinal && state.FinalSeq > upTo {
-			upTo = state.FinalSeq
-		}
-		// Emission times are not recoverable from the sink alone, so the
-		// settle clock starts from a point already past the window. This is
-		// the standalone-verify path; the run command knows the real times.
-		emittedAt := now.Add(-2 * vf.maxWait)
+		// Emission times are not recoverable from a store, so the settle clock
+		// starts from a point already past the window. The run command, which
+		// did the emitting, knows the real times.
+		emittedAt := now.Add(-2 * *maxWait)
 		for seq := uint64(1); seq <= upTo; seq++ {
-			v.NoteEmitted(src, epoch, seq, emittedAt)
+			v.NoteEmitted(st.src, st.epoch, seq, emittedAt)
 		}
-		v.CloseEpoch(src, epoch, upTo, state.HasFinal)
+		v.CloseEpoch(st.src, st.epoch, upTo, hasFinal)
 	}
 
-	for i := 0; i < 2; i++ {
+	// Three passes: reconcile and mark absences provisional, run the
+	// mandatory re-check, then settle the verdict.
+	for i := 0; i < 3; i++ {
 		if err := v.Sweep(ctx); err != nil {
 			return verify.ExitHarnessError, err
 		}
+		clock = clock.Add(2 * *maxWait)
 	}
-	v.NoteInvalidLine(sink.InvalidLines())
+	if fileSink != nil {
+		v.NoteInvalidLine(fileSink.InvalidLines())
+	}
 
 	verdict := v.Verdict()
-	return emitReport(verdict, registry.Names(), vf.asJSON)
+
+	if store != nil {
+		if err := v.SaveState(store); err != nil {
+			fmt.Fprintf(os.Stderr, "lossledger: could not save state: %v\n", err)
+		}
+	}
+	return emitReport(verdict, registry.Names(), *asJSON)
+}
+
+// epochExtent asks the sinks how far an epoch ran and whether it closed
+// cleanly. A clean close means every sequence below the final is legitimately
+// expected; a crash means nothing past the highest observed may be called
+// missing.
+func epochExtent(ctx context.Context, reg *adapter.Registry, fileSink *adapter.FileSink, src, epoch string) (uint64, bool) {
+	var upTo uint64
+	var hasFinal bool
+
+	if fileSink != nil {
+		st := fileSink.EpochState(src, epoch)
+		hasFinal = st.HasFinal
+		upTo = st.MaxSeq
+		if st.HasFinal && st.FinalSeq > upTo {
+			upTo = st.FinalSeq
+		}
+	}
+	for _, sink := range reg.All() {
+		ch, ok := sink.(*adapter.ClickHouse)
+		if !ok {
+			continue
+		}
+		st, err := ch.EpochState(ctx, src, epoch)
+		if err != nil {
+			continue
+		}
+		if st.HasFinal {
+			hasFinal = true
+		}
+		if st.MaxSeq > upTo {
+			upTo = st.MaxSeq
+		}
+		if st.HasFinal && st.FinalSeq > upTo {
+			upTo = st.FinalSeq
+		}
+	}
+	return upTo, hasFinal
 }
 
 // runRun emits and verifies together against a directory sink.
@@ -421,6 +541,14 @@ func emitReport(v verify.Verdict, sinks []string, asJSON bool) (int, error) {
 	// A verifier that accused the pipeline wrongly has failed at its one job,
 	// so that outranks whatever it thinks it found.
 	if v.FalseMissing > 0 {
+		return verify.ExitHarnessError, nil
+	}
+	// Books that do not balance cannot support any verdict, clean or
+	// otherwise. Reporting CLEAN here would be the worst outcome available:
+	// the ledger has lost track of sequences and the exit code would tell a
+	// pipeline it passed.
+	if err := v.Conservation(); err != nil {
+		fmt.Fprintf(os.Stderr, "lossledger: the verdict is not trustworthy: %v\n", err)
 		return verify.ExitHarnessError, nil
 	}
 	return v.ExitCode(), nil
