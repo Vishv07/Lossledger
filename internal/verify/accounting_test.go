@@ -260,3 +260,74 @@ func indexOf(h, n string) int {
 	}
 	return -1
 }
+
+// TestMissingNeedsTheClockToAdvance pins the requirement behind a real bug.
+//
+// The verify command swept twice in the same millisecond. Every sequence was
+// settled, but the mandatory re-check delay never elapsed, so nothing was ever
+// confirmed absent and the command reported CLEAN with 54 sequences deleted
+// from the store. A false negative on a tool whose job is finding loss.
+//
+// The property: sweeping without letting time pass can never produce MISSING.
+// Any caller reconciling historical data has to drive the clock forward.
+func TestMissingNeedsTheClockToAdvance(t *testing.T) {
+	const emitted = 200
+
+	lossy := fullSet(emitted)
+	for s := uint64(50); s <= 79; s++ {
+		delete(lossy, s)
+	}
+
+	run := func(advanceBetweenSweeps bool) Verdict {
+		reg, err := adapter.NewRegistry(&holdingSink{name: "sink", held: lossy})
+		if err != nil {
+			t.Fatal(err)
+		}
+		clock := time.Unix(1_700_000_000, 0)
+		v, err := NewVerifier(VerifierConfig{
+			Now: func() time.Time { return clock }, MaxWait: time.Minute,
+		}, reg)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		emittedAt := clock.Add(-10 * time.Minute)
+		for s := uint64(1); s <= emitted; s++ {
+			v.NoteEmitted("node-a", testEpoch, s, emittedAt)
+		}
+		v.CloseEpoch("node-a", testEpoch, emitted, true)
+
+		for i := 0; i < 3; i++ {
+			if err := v.Sweep(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if advanceBetweenSweeps {
+				clock = clock.Add(2 * time.Minute)
+			}
+		}
+		return v.Verdict()
+	}
+
+	frozen := run(false)
+	if frozen.MissingN != 0 {
+		t.Errorf("with a frozen clock, missing = %d; the mandatory re-check cannot have completed", frozen.MissingN)
+	}
+	// The books refuse to balance, which is the signal a caller must not
+	// ignore. This is what the command now treats as fatal rather than
+	// reporting a clean verdict alongside it.
+	if err := frozen.Conservation(); err == nil {
+		t.Error("conservation passed while 30 sequences were unaccounted for; " +
+			"without this signal a frozen-clock run looks healthy")
+	}
+
+	advanced := run(true)
+	if advanced.MissingN != 30 {
+		t.Errorf("with the clock advancing, missing = %d, want 30", advanced.MissingN)
+	}
+	if advanced.Worst != Missing {
+		t.Errorf("verdict = %s, want MISSING", advanced.Worst)
+	}
+	if err := advanced.Conservation(); err != nil {
+		t.Errorf("conservation: %v", err)
+	}
+}
