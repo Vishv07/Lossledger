@@ -141,6 +141,21 @@ func (v *Verifier) streamFor(key streamKey) *stream {
 	return s
 }
 
+// SetClock replaces the verifier's time source.
+//
+// Commands that reconcile historical data use this: a store cannot say when a
+// line was written, so those runs drive a synthetic clock forward between
+// sweeps rather than waiting out real settle windows. Production run mode
+// leaves the wall clock alone.
+func (v *Verifier) SetClock(now func() time.Time) {
+	if now == nil {
+		return
+	}
+	v.mu.Lock()
+	v.cfg.Now = now
+	v.mu.Unlock()
+}
+
 // NoteEmitted tells the verifier a sequence was written, which starts its
 // settle clock at every sink.
 //
