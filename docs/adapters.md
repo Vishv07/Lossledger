@@ -170,19 +170,37 @@ sink, err := adapter.NewClickHouse(adapter.ClickHouseConfig{
 (`async_insert_busy_timeout_ms`, one second by default) and a distributed table
 adds more, so raise it rather than lower it if you are unsure.
 
-### What has been verified, and what has not
+### What has been verified
 
-**Verified.** The adapter passes the full conformance suite against an
-in-memory server that implements the same statements with the same semantics:
-inclusive bounds, `uniqExact` counting distinct while `count()` counts rows,
-and the grouped `HAVING` over continuation rows. Parameter binding, identifier
-validation, error propagation, partial detection, epoch state and context
-cancellation are all covered.
+**Against a real ClickHouse server**, through the compose testbed:
 
-**Not verified.** It has **not been run against a real ClickHouse server**. The
-test double proves the adapter builds correct SQL and parses the response
-format. It cannot prove that ClickHouse answers these statements the way the
-double does.
+- The shared conformance suite passes in full.
+- An end-to-end run was measured: the emitter wrote 2,000 events into a
+  directory, Vector tailed it and wrote rows, and the adapter counted exactly
+  2,000 distinct sequences from 1 to 2,000 with the final line intact.
+- Rows were then deleted from the store and the tool reported
+  `MISSING ranges 640-689, 1200-1203`, which is exactly what was removed.
+- A fresh clean run afterwards reported CLEAN with no false positives.
 
-Until the compose testbed exists, treat this adapter as untested against the
-real thing, and do not publish a finding produced with it.
+The bisection assumption is checked directly against the server: a range split
+in half must count to the same total as the whole, which is where a
+disagreement about inclusive bounds would surface.
+
+Run it yourself:
+
+```sh
+export CANARY_DIR=/tmp/ll-canary && mkdir -p $CANARY_DIR
+set -a && . testbed/versions.lock && set +a
+docker compose -f testbed/vector-clickhouse.compose.yaml up -d
+
+LOSSLEDGER_CH_ADDR=http://127.0.0.1:18123 go test ./internal/adapter/ -run Integration -v
+```
+
+The integration tests skip unless `LOSSLEDGER_CH_ADDR` is set, so the ordinary
+suite and CI need no Docker.
+
+### What is still not verified
+
+A single node. Behaviour against a cluster, a distributed table, or a replica
+lagging behind its leader is untested, and that is where `SettleHint` matters
+most. Raise it rather than lower it if you are unsure.
